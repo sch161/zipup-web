@@ -1,4 +1,5 @@
-import { Link, NavLink } from 'react-router-dom'
+import { Link, NavLink, useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
 
 interface TopNavProps {
   variant?: 'app' | 'auth'
@@ -11,6 +12,13 @@ const menuItems = [
 ]
 
 export default function TopNav({ variant = 'app' }: TopNavProps) {
+  const navigate = useNavigate()
+
+  async function handleLogout() {
+    await supabase.auth.signOut()
+    navigate('/login')
+  }
+
   return (
     <header className="hidden h-[76px] w-full shrink-0 items-center border-b border-border bg-white lg:flex">
       <div className="mx-auto flex w-full max-w-[960px] items-center justify-between px-6">
@@ -35,13 +43,18 @@ export default function TopNav({ variant = 'app' }: TopNavProps) {
         )}
 
         {variant === 'app' ? (
-          <Link
-            to="/profile"
-            aria-label="프로필"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-bg text-lg"
-          >
-            👤
-          </Link>
+          <div className="flex items-center gap-4">
+            <button type="button" onClick={handleLogout} className="text-sm font-medium text-text-gray">
+              로그아웃
+            </button>
+            <Link
+              to="/profile"
+              aria-label="프로필"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-bg text-lg"
+            >
+              👤
+            </Link>
+          </div>
         ) : (
           <div className="flex items-center gap-3">
             <Link to="/login" className="text-sm font-bold text-primary">
