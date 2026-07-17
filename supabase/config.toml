@@ -396,6 +396,16 @@ verify_jwt = false
 # The function still resolves the logged-in user itself via the Authorization header.
 verify_jwt = false
 
+[functions.fetch-market-data]
+# Cron-only function, never called from the frontend. pg_cron/pg_net can't attach a
+# Supabase-signed JWT under the new publishable-key system, so auth is instead enforced
+# inside the function via a shared `x-cron-secret` header (see _shared/cronAuth.ts).
+verify_jwt = false
+
+[functions.fetch-region-buzz]
+# Same reasoning as fetch-market-data above.
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
