@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Home from './pages/Home'
 import Analysis from './pages/Analysis'
+import Cure from './pages/Cure'
 import Placeholder from './pages/Placeholder'
 
 export default function App() {
@@ -16,12 +17,7 @@ export default function App() {
 
       <Route element={<MainLayout />}>
         <Route path="/home" element={<Home />} />
-        <Route
-          path="/psych-guard"
-          element={
-            <Placeholder title="🛡️ 심리 가드" emoji="🛡️" description="가스라이팅 탐지 기능은 준비 중이에요." />
-          }
-        />
+        <Route path="/psych-guard" element={<Cure />} />
         <Route
           path="/map"
           element={<Placeholder title="안심 시그널 맵" emoji="🗺️" description="지역별 위험도 지도는 준비 중이에요." />}

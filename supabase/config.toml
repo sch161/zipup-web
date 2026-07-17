@@ -391,6 +391,11 @@ deno_version = 2
 # would reject every anonymous call. The `apikey` header (always sent) is enough here.
 verify_jwt = false
 
+[functions.analyze-chat]
+# Same reasoning as analyze-contract above — logged-out calls don't carry a JWT.
+# The function still resolves the logged-in user itself via the Authorization header.
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
