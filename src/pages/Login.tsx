@@ -5,12 +5,15 @@ import Input from '../components/ui/Input'
 import TopNav from '../components/TopNav'
 import { supabase } from '../lib/supabase'
 
+type OAuthProvider = 'google' | 'kakao'
+
 export default function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [oauthLoading, setOauthLoading] = useState<OAuthProvider | null>(null)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -25,6 +28,23 @@ export default function Login() {
       return
     }
     navigate('/home')
+  }
+
+  async function handleOAuthLogin(provider: OAuthProvider) {
+    setError(null)
+    setOauthLoading(provider)
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: `${window.location.origin}/home` },
+    })
+
+    // On success the browser navigates away to the provider's consent screen,
+    // so we only ever reach this line when the request itself failed.
+    if (error) {
+      setError(error.message)
+      setOauthLoading(null)
+    }
   }
 
   return (
@@ -78,13 +98,23 @@ export default function Login() {
           </div>
 
           <div className="flex flex-col gap-3">
-            <Button variant="outline" type="button">
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => handleOAuthLogin('google')}
+              disabled={oauthLoading !== null}
+            >
               <GoogleIcon />
-              Google로 계속하기
+              {oauthLoading === 'google' ? '이동 중...' : 'Google로 계속하기'}
             </Button>
-            <Button variant="outline" type="button">
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => handleOAuthLogin('kakao')}
+              disabled={oauthLoading !== null}
+            >
               <KakaoIcon />
-              카카오로 계속하기
+              {oauthLoading === 'kakao' ? '이동 중...' : '카카오로 계속하기'}
             </Button>
           </div>
 

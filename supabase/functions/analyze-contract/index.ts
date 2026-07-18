@@ -1,11 +1,18 @@
 // Supabase Edge Function: analyze-contract
 // Calls Gemini to assess 전세사기 (lease-fraud) risk for a property / uploaded document.
 // The Gemini API key is read from Supabase Secrets (Deno.env) — it never reaches the client.
+// Each analysis is also persisted to `analyses` via a service_role client (same pattern as analyze-chat).
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 // Pinned model versions keep getting retired/restricted (2.0-flash, then 2.5-flash for new
 // accounts) — "-latest" is a Google-managed alias that stays current automatically.
 const GEMINI_MODEL = Deno.env.get('GEMINI_MODEL') ?? 'gemini-flash-latest'
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -90,6 +97,18 @@ function buildPrompt(input: AnalyzeRequest): string {
 6. 반드시 지정된 JSON 스키마 형식으로만 응답하세요.`
 }
 
+async function resolveUserId(req: Request): Promise<string | null> {
+  const authHeader = req.headers.get('Authorization')
+  if (!authHeader?.startsWith('Bearer ')) return null
+
+  const token = authHeader.slice('Bearer '.length)
+  const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  const {
+    data: { user },
+  } = await supabaseAuth.auth.getUser(token)
+  return user?.id ?? null
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -120,6 +139,16 @@ Deno.serve(async (req: Request) => {
     parts.push({ inline_data: { mime_type: input.fileMimeType, data: input.fileBase64 } })
   }
 
+  // TEMP DEBUG: short client-side timeout + extra diagnostics to find why this hangs — revert before shipping.
+  const debugMeta = {
+    model: GEMINI_MODEL,
+    apiKeyLength: GEMINI_API_KEY?.length ?? 0,
+    elapsedMs: 0,
+  }
+  const startedAt = Date.now()
+  const controller = new AbortController()
+  const abortTimer = setTimeout(() => controller.abort(), 20000)
+
   try {
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
@@ -133,13 +162,24 @@ Deno.serve(async (req: Request) => {
             responseSchema: ANALYSIS_RESPONSE_SCHEMA,
           },
         }),
+        signal: controller.signal,
       },
     )
+    clearTimeout(abortTimer)
+    debugMeta.elapsedMs = Date.now() - startedAt
 
     if (!geminiRes.ok) {
       const errText = await geminiRes.text()
       console.error('Gemini API error', geminiRes.status, errText)
-      return jsonResponse({ error: 'AI 분석 요청에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 502)
+      return jsonResponse(
+        {
+          error: 'AI 분석 요청에 실패했습니다. 잠시 후 다시 시도해주세요.',
+          debugStatus: geminiRes.status,
+          debugText: errText.slice(0, 1000),
+          debugMeta,
+        },
+        502,
+      )
     }
 
     const geminiJson = await geminiRes.json()
@@ -147,13 +187,39 @@ Deno.serve(async (req: Request) => {
 
     if (!text) {
       console.error('Empty Gemini response', JSON.stringify(geminiJson))
-      return jsonResponse({ error: 'AI로부터 응답을 받지 못했습니다.' }, 502)
+      return jsonResponse({ error: 'AI로부터 응답을 받지 못했습니다.', debugMeta, debugJson: geminiJson }, 502)
     }
 
     const result = JSON.parse(text)
+
+    const userId = await resolveUserId(req)
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    const { error: insertError } = await supabaseAdmin.from('analyses').insert({
+      user_id: userId,
+      address: input.address || null,
+      deposit: input.deposit || null,
+      building_type: input.buildingType || null,
+      overall_score: result.overallScore,
+      risk_level: result.riskLevel,
+      categories: result.categories,
+      detected_clauses: result.detectedClauses ?? [],
+      recommended_actions: result.recommendedActions,
+      ai_comment: result.aiComment,
+    })
+
+    if (insertError) {
+      // Don't fail the user-facing analysis just because the history log failed to save.
+      console.error('analyses insert error', insertError)
+    }
+
     return jsonResponse(result)
   } catch (err) {
+    clearTimeout(abortTimer)
+    debugMeta.elapsedMs = Date.now() - startedAt
     console.error('analyze-contract error', err)
+    if (err instanceof Error && err.name === 'AbortError') {
+      return jsonResponse({ error: 'Gemini 요청이 20초 안에 응답하지 않았습니다 (디버그).', debugMeta }, 502)
+    }
     return jsonResponse({ error: '분석 중 오류가 발생했습니다.' }, 500)
   }
 })
