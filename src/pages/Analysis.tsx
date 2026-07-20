@@ -84,6 +84,26 @@ export default function Analysis() {
           <h1 className="text-lg font-bold text-primary lg:text-2xl">위험도 분석 결과</h1>
         </div>
 
+        {result.hugDefaulterMatch?.matched && (
+          <div className="mt-4 rounded-card border-2 border-danger bg-danger-bg p-4 lg:mt-6">
+            <p className="text-sm font-bold text-danger">
+              ⚠️ HUG 상습 채무불이행자 명단에서 발견된 이름과 유사합니다
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-text-dark">
+              계약서에서 확인된 임대인 "{result.landlordName}"과(와) 이름이 유사한 인물이 HUG(주택도시보증공사)
+              상습채무불이행자 명단에 있어요. 동명이인일 수 있으니, 계약 전 반드시 신분증과 등기부등본상 소유자
+              정보를 직접 대조해 확인하세요.
+            </p>
+            <ul className="mt-2 flex flex-col gap-1">
+              {result.hugDefaulterMatch.matches.map((m, i) => (
+                <li key={i} className="text-[11px] text-text-gray">
+                  · {m.name} ({Math.round(m.similarity * 100)}% 유사) — {m.address}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* 모바일: 세로 스택(DOM 순서 그대로). 데스크톱(lg): 좌(넓게)/우(사이드바) 2단 그리드로 명시적 배치 */}
         <div className="mt-4 flex flex-col gap-4 lg:mt-6 lg:grid lg:grid-cols-[1fr_360px] lg:items-start lg:gap-6">
           {/* 종합 위험도 점수 */}

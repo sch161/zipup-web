@@ -38,6 +38,28 @@ interface AnalyzeRequest {
 
 const RISK_LEVELS = ['danger', 'warning', 'success'] as const
 
+// 계약서 이미지/PDF에서 위험 판단에 쓸만한 핵심 키워드만 빠르게 뽑아내는 1차 호출용 스키마.
+// RAG 검색(contract_risk_patterns)에 쓸 쿼리어를 만들기 위한 것으로, 최종 분석 스키마와는 별개다.
+const KEYWORD_EXTRACTION_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    keywords: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      description: '전세사기 위험 판단에 중요한 핵심 키워드/조항 5~10개 (예: 근저당권, 신탁, 다가구, 확정일자, 위반건축물 등). 정보가 부족하면 빈 배열.',
+    },
+  },
+  required: ['keywords'],
+}
+
+interface RiskPattern {
+  category: string
+  pattern_description: string
+  risk_level: string
+  example_clause: string | null
+  source: string | null
+}
+
 const ANALYSIS_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -74,17 +96,41 @@ const ANALYSIS_RESPONSE_SCHEMA = {
       description: '사용자가 취해야 할 실행 가능한 조치 목록',
     },
     aiComment: { type: 'STRING', description: '전체 상황에 대한 한국어 종합 코멘트' },
+    landlordName: {
+      type: 'STRING',
+      description: '첨부된 문서(등기부등본/계약서)에서 확인되는 임대인(소유자) 성명. 확인할 수 없으면 빈 문자열.',
+    },
   },
   required: ['overallScore', 'riskLevel', 'categories', 'recommendedActions', 'aiComment'],
 }
 
-function buildPrompt(input: AnalyzeRequest): string {
+interface HugDefaulterMatch {
+  name: string
+  address: string
+  similarity: number
+}
+
+function formatRiskPatterns(patterns: RiskPattern[]): string {
+  if (patterns.length === 0) return '(관련 참고 사례 없음)'
+  return patterns
+    .map(
+      (p, i) =>
+        `${i + 1}. [${p.category}/${p.risk_level}] ${p.pattern_description}${p.example_clause ? `\n   예시: ${p.example_clause}` : ''}`,
+    )
+    .join('\n')
+}
+
+function buildPrompt(input: AnalyzeRequest, riskPatterns: RiskPattern[]): string {
   return `당신은 한국 전세 계약의 "전세사기" 위험을 분석하는 전문 AI입니다.
 아래 매물 정보와 (첨부되었다면) 등기부등본/계약서 이미지를 바탕으로 위험도를 분석하세요.
 
 매물 주소: ${input.address ?? '정보 없음'}
 전세보증금: ${input.deposit ? `${input.deposit}만원` : '정보 없음'}
 건물 유형: ${input.buildingType ?? '정보 없음'}
+
+참고 사례 (국토교통부 전세사기 예방 가이드라인 기반 위험 패턴 DB에서 검색됨. 실제 문서 내용이 아래 사례와
+비슷한 패턴을 보이는지 판단 근거로만 활용하고, 해당하지 않으면 무리하게 끼워 맞추지 마세요):
+${formatRiskPatterns(riskPatterns)}
 
 지침:
 1. 권리관계, 특약사항, 전세가율, 건물상태 4개 항목을 각각 0~100점(높을수록 안전)으로 평가하세요.
@@ -94,7 +140,78 @@ function buildPrompt(input: AnalyzeRequest): string {
    첨부 문서가 없다면 빈 배열([])로 두세요. 근거 없이 추측하지 마세요.
 4. recommendedActions에는 사용자가 바로 실행할 수 있는 조치를 문장으로 나열하세요.
 5. aiComment에는 전체 상황을 친절한 한국어로 3~5문장 요약하세요.
-6. 반드시 지정된 JSON 스키마 형식으로만 응답하세요.`
+6. 첨부된 문서에서 임대인(소유자) 성명이 확인되면 landlordName에 그대로 적으세요. 확인할 수 없으면 빈 문자열로 두세요.
+7. 반드시 지정된 JSON 스키마 형식으로만 응답하세요.`
+}
+
+/** Gemini에 한 번 더 가벼운 호출을 보내 RAG 검색용 키워드만 뽑는다. 실패해도 빈 배열로 폴백. */
+async function extractKeywords(input: AnalyzeRequest): Promise<string[]> {
+  const parts: Record<string, unknown>[] = [
+    {
+      text: `아래 매물 정보와 (첨부되었다면) 문서 이미지에서 전세사기 위험 판단에 쓸 핵심 키워드 5~10개를 뽑으세요.
+매물 주소: ${input.address ?? '정보 없음'}
+전세보증금: ${input.deposit ? `${input.deposit}만원` : '정보 없음'}
+건물 유형: ${input.buildingType ?? '정보 없음'}`,
+    },
+  ]
+  if (input.fileBase64 && input.fileMimeType) {
+    parts.push({ inline_data: { mime_type: input.fileMimeType, data: input.fileBase64 } })
+  }
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: KEYWORD_EXTRACTION_SCHEMA,
+          },
+        }),
+        signal: AbortSignal.timeout(10000),
+      },
+    )
+    if (!res.ok) return []
+    const json = await res.json()
+    const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text
+    if (!text) return []
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed.keywords) ? parsed.keywords.filter((k: unknown) => typeof k === 'string' && k.trim()) : []
+  } catch (err) {
+    console.error('extractKeywords failed, falling back to empty list', err)
+    return []
+  }
+}
+
+/** keywords로 contract_risk_patterns.search_vector를 검색해 관련도 상위 패턴을 가져온다. */
+async function fetchRiskPatterns(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  keywords: string[],
+): Promise<RiskPattern[]> {
+  if (keywords.length === 0) return []
+
+  // 각 키워드 내부 단어는 &(AND), 키워드끼리는 |(OR)로 묶어 to_tsquery 문법을 만든다.
+  // tsquery 특수문자(& | ! ( ) : ')는 검색어에 포함될 일이 없는 일반 한국어 키워드라 별도 이스케이프 없이 제거만 한다.
+  const tsQuery = keywords
+    .map((k) => k.replace(/[&|!():']/g, ' ').trim().split(/\s+/).filter(Boolean).join(' & '))
+    .filter(Boolean)
+    .join(' | ')
+  if (!tsQuery) return []
+
+  const { data, error } = await supabaseAdmin
+    .from('contract_risk_patterns')
+    .select('category, pattern_description, risk_level, example_clause, source')
+    .textSearch('search_vector', tsQuery, { config: 'simple' })
+    .limit(5)
+
+  if (error) {
+    console.error('fetchRiskPatterns failed, continuing without reference cases', error)
+    return []
+  }
+  return data ?? []
 }
 
 async function resolveUserId(req: Request): Promise<string | null> {
@@ -134,7 +251,13 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: '매물 주소 또는 분석할 문서가 필요합니다.' }, 400)
   }
 
-  const parts: Record<string, unknown>[] = [{ text: buildPrompt(input) }]
+  const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+  // RAG: Gemini 본 호출 전에 키워드를 뽑아 contract_risk_patterns에서 관련 사례를 찾아 프롬프트에 포함시킨다.
+  const keywords = await extractKeywords(input)
+  const riskPatterns = await fetchRiskPatterns(supabaseAdmin, keywords)
+
+  const parts: Record<string, unknown>[] = [{ text: buildPrompt(input, riskPatterns) }]
   if (input.fileBase64 && input.fileMimeType) {
     parts.push({ inline_data: { mime_type: input.fileMimeType, data: input.fileBase64 } })
   }
@@ -192,8 +315,21 @@ Deno.serve(async (req: Request) => {
 
     const result = JSON.parse(text)
 
+    // 임대인 이름이 확인됐다면 HUG 상습채무불이행자 명단과 trigram 유사도로 대조한다.
+    if (typeof result.landlordName === 'string' && result.landlordName.trim()) {
+      const { data: nameMatches, error: nameMatchError } = await supabaseAdmin.rpc(
+        'search_hug_defaulters_by_name',
+        { query_name: result.landlordName.trim() },
+      )
+      if (nameMatchError) {
+        console.error('search_hug_defaulters_by_name failed, continuing without match info', nameMatchError)
+      } else {
+        const matches = (nameMatches ?? []) as HugDefaulterMatch[]
+        result.hugDefaulterMatch = { matched: matches.length > 0, matches }
+      }
+    }
+
     const userId = await resolveUserId(req)
-    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     const { error: insertError } = await supabaseAdmin.from('analyses').insert({
       user_id: userId,
       address: input.address || null,

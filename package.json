@@ -8,10 +8,12 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "generate:regions": "node scripts/generate-regions.mjs"
+    "generate:regions": "node scripts/generate-regions.mjs",
+    "sync:hug-defaulters": "node scripts/sync-hug-defaulters.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
+    "cheerio": "^1.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
@@ -24,6 +26,7 @@
     "@typescript-eslint/parser": "^8.8.1",
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.4.2",
     "eslint": "^9.12.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-react-refresh": "^0.4.12",

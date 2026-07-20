@@ -16,6 +16,17 @@ export interface DetectedClause {
   explanation: string
 }
 
+export interface HugDefaulterMatch {
+  name: string
+  address: string
+  similarity: number
+}
+
+export interface HugDefaulterMatchResult {
+  matched: boolean
+  matches: HugDefaulterMatch[]
+}
+
 export interface AnalysisResult {
   overallScore: number
   riskLevel: RiskLevel
@@ -23,6 +34,8 @@ export interface AnalysisResult {
   detectedClauses: DetectedClause[]
   recommendedActions: string[]
   aiComment: string
+  landlordName?: string
+  hugDefaulterMatch?: HugDefaulterMatchResult
 }
 
 export interface AnalyzeContractInput {

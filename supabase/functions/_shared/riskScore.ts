@@ -28,6 +28,19 @@ export function newsMentionScore(count: number): number {
   return 50 + ((capped - 20) / (50 - 20)) * 50
 }
 
+/**
+ * HUG 상습채무불이행자 밀도 점수: region_stats.region_name과 hug_defaulters.address를 매칭한
+ * 지역별 건수(hug_defaulter_region_counts RPC, _shared/riskScore.ts 하단 참고) 기준.
+ * 0~5건(중앙값) 0~20점, 6~22건(90번째 백분위수) 20~60점, 23건↑ 60~100점.
+ * 실제 분포(2026-07 크롤 기준, 252개 지역): 중앙값 5, p90 22, 최댓값 91.
+ */
+export function hugDefaulterScore(count: number): number {
+  if (count <= 5) return (count / 5) * 20
+  if (count <= 22) return 20 + ((count - 5) / (22 - 5)) * 40
+  const capped = Math.min(count, 90)
+  return 60 + ((capped - 22) / (90 - 22)) * 40
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
@@ -57,18 +70,28 @@ export function effectiveJeonseRatio(aptJeonseRatio: number | null, villaJeonseR
 }
 
 /** jeonseRatio가 없으면(아파트/빌라 모두 그달 실거래 데이터 없음) 아직 점수를 매길 근거가 부족하므로 null을 반환한다. */
-export function calculateRisk(jeonseRatio: number | null, newsMentions: number | null): RiskResult | null {
+export function calculateRisk(
+  jeonseRatio: number | null,
+  newsMentions: number | null,
+  hugDefaulterCount: number | null,
+): RiskResult | null {
   if (jeonseRatio == null) return null
 
   const jScore = jeonseRatioScore(jeonseRatio)
+  const hScore = hugDefaulterScore(hugDefaulterCount ?? 0)
   const nScore = newsMentionScore(newsMentions ?? 0)
-  const riskScore = Math.round((jScore * 0.7 + nScore * 0.3) * 10) / 10
+  const riskScore = Math.round((jScore * 0.5 + hScore * 0.3 + nScore * 0.2) * 10) / 10
   const riskLevel: RiskLevel = riskScore >= 70 ? '위험' : riskScore >= 40 ? '주의' : '안전'
 
   return { riskScore, riskLevel }
 }
 
-/** region_stats의 모든 행을 순회하며 현재 저장된 아파트/빌라 전세가율+news_mentions로 risk_score를 다시 계산한다. */
+interface HugRegionCount {
+  region_code: string
+  defaulter_count: number
+}
+
+/** region_stats의 모든 행을 순회하며 현재 저장된 아파트/빌라 전세가율+news_mentions+HUG 밀도로 risk_score를 다시 계산한다. */
 export async function recalculateAllRiskScores(supabase: SupabaseClient): Promise<void> {
   const { data: rows, error } = await supabase
     .from('region_stats')
@@ -79,14 +102,23 @@ export async function recalculateAllRiskScores(supabase: SupabaseClient): Promis
     return
   }
 
+  const { data: hugCounts, error: hugError } = await supabase.rpc('hug_defaulter_region_counts')
+  if (hugError) {
+    console.error('recalculateAllRiskScores: failed to load hug_defaulter_region_counts, defaulting to 0', hugError)
+  }
+  const hugCountByRegion = new Map<string, number>(
+    ((hugCounts as HugRegionCount[] | null) ?? []).map((r) => [r.region_code, r.defaulter_count]),
+  )
+
   for (const row of rows) {
     const jeonseRatio = effectiveJeonseRatio(row.jeonse_ratio, row.villa_jeonse_ratio)
-    const result = calculateRisk(jeonseRatio, row.news_mentions)
+    const hugDefaulterCount = hugCountByRegion.get(row.region_code) ?? 0
+    const result = calculateRisk(jeonseRatio, row.news_mentions, hugDefaulterCount)
     if (!result) continue
 
     const { error: updateError } = await supabase
       .from('region_stats')
-      .update({ risk_score: result.riskScore, risk_level: result.riskLevel })
+      .update({ risk_score: result.riskScore, risk_level: result.riskLevel, hug_defaulter_count: hugDefaulterCount })
       .eq('region_code', row.region_code)
 
     if (updateError) {
