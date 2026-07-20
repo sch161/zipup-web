@@ -248,6 +248,12 @@ export default function SignalMap() {
               <dd className="text-right font-medium text-text-dark">
                 {selectedStat.news_mentions != null ? `${selectedStat.news_mentions.toLocaleString('ko-KR')}건` : '정보 없음'}
               </dd>
+              <dt className="text-text-gray">HUG 채무불이행자 등록</dt>
+              <dd className="text-right font-medium text-text-dark">
+                {selectedStat.hug_defaulter_count != null
+                  ? `${selectedStat.hug_defaulter_count.toLocaleString('ko-KR')}명`
+                  : '정보 없음'}
+              </dd>
               <dt className="text-text-gray">위험도 점수</dt>
               <dd className="text-right font-medium text-text-dark">
                 {selectedStat.risk_score != null ? `${selectedStat.risk_score}점` : '정보 없음'}
@@ -260,9 +266,11 @@ export default function SignalMap() {
       )}
 
       <p className="text-[10px] leading-relaxed text-text-lightgray">
-        전세가율은 국토교통부 실거래가 기준(정량 지표), 뉴스 언급 건수는 언론 노출 빈도 기반 참고 지표로 공식 피해 통계가
-        아닙니다. 위험도 점수는 시세 파악이 어려워 전세사기 위험이 더 큰 빌라(연립다세대) 전세가율에 아파트보다 더 큰
-        가중치를 두어 계산합니다.
+        위험도 점수는 전세가율 50% + HUG(주택도시보증공사) 상습채무불이행자 등록 밀도 30% + 전세사기 뉴스 언급 20%를
+        합산해 계산합니다. 전세가율은 국토교통부 실거래가 기준(정량 지표)이며, 시세 파악이 어려워 전세사기 위험이 더 큰
+        빌라(연립다세대) 전세가율에 아파트보다 더 큰 가중치를 둡니다. HUG 채무불이행자 등록 건수는 해당 지역 주소로
+        집계된 상습채무불이행자 수이고, 뉴스 언급 건수는 언론 노출 빈도 기반 참고 지표입니다. 세 지표 모두 공식 피해
+        통계가 아닌 참고용 지표입니다.
       </p>
     </div>
   )
