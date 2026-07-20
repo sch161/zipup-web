@@ -65,7 +65,7 @@ const ANALYSIS_RESPONSE_SCHEMA = {
       type: 'OBJECT',
       properties: {
         isBlacklisted: { type: 'BOOLEAN', description: 'contract_risk_patterns의 실제 피해 패턴과 계약서 내용이 일치하는지 여부 (true/false)' },
-        reason: { type: 'STRING', description: '패턴 DB의 어떤 사례와 계약서 내용을 1:1로 대조했는지에 대한 근거 설명' },
+        reason: { type: 'STRING', description: '패턴 DB의 어떤 사례와 대조했는지에 대한 근거 설명, 1문장' },
       },
       required: ['isBlacklisted', 'reason'],
     },
@@ -77,7 +77,7 @@ const ANALYSIS_RESPONSE_SCHEMA = {
           name: { type: 'STRING', description: '권리관계 | 특약사항 | 전세가율 | 건물상태 중 하나' },
           score: { type: 'INTEGER' },
           level: { type: 'STRING', enum: RISK_LEVELS },
-          comment: { type: 'STRING' },
+          comment: { type: 'STRING', description: '1문장으로 간결하게' },
         },
         required: ['name', 'score', 'level', 'comment'],
       },
@@ -89,7 +89,7 @@ const ANALYSIS_RESPONSE_SCHEMA = {
         properties: {
           summary: { type: 'STRING', description: '조항 원문 요약' },
           level: { type: 'STRING', enum: RISK_LEVELS },
-          explanation: { type: 'STRING', description: '어려운 용어 해설 및 왜 위험/주의/안전한지에 대한 AI 설명' },
+          explanation: { type: 'STRING', description: '어려운 용어 해설 및 왜 위험/주의/안전한지에 대한 AI 설명, 1~2문장' },
         },
         required: ['summary', 'level', 'explanation'],
       },
@@ -97,9 +97,9 @@ const ANALYSIS_RESPONSE_SCHEMA = {
     recommendedActions: {
       type: 'ARRAY',
       items: { type: 'STRING' },
-      description: '세입자가 임대인/중개사에게 요구해야 할 필수 방어 특약 및 실행 조치 목록',
+      description: '세입자가 임대인/중개사에게 요구해야 할 필수 방어 특약 및 실행 조치, 가장 중요한 3~5개',
     },
-    aiComment: { type: 'STRING', description: '전체 상황에 대한 한국어 종합 코멘트 및 행동 요령' },
+    aiComment: { type: 'STRING', description: '전체 상황에 대한 한국어 종합 코멘트 및 행동 요령, 2~3문장' },
     landlordName: {
       type: 'STRING',
       description: '첨부된 문서(등기부등본/계약서)에서 확인되는 임대인(소유자) 성명. 확인할 수 없으면 빈 문자열.',
@@ -167,14 +167,20 @@ async function callGeminiWithRetry(url: string, requestBody: unknown, timeoutMs:
   }
 }
 
+// 응답 속도를 위해 프롬프트에 넣는 참고 사례는 짧게 자른다. 20건 전체를 원문 그대로 넣으면
+// 입력 토큰이 커져 응답이 눈에 띄게 느려진다 — 패턴 판별에는 핵심 문장 정도로 충분하다.
+function truncate(text: string, maxLen: number): string {
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text
+}
+
 function formatRiskPatterns(patterns: RiskPattern[]): string {
   if (patterns.length === 0) return '(연동된 피해 패턴 데이터가 없습니다)'
   return patterns
     .map(
       (p, i) =>
-        `[피해 사례 ${i + 1}] ${p.pattern_name} | 위험도: ${p.severity}\n- 실제 피해 내용: ${p.description}\n- 권장 대처 및 방어 특약: ${p.recommended_action}`,
+        `[사례 ${i + 1}] ${p.pattern_name} (${p.severity}): ${truncate(p.description, 120)} → ${truncate(p.recommended_action, 100)}`,
     )
-    .join('\n\n')
+    .join('\n')
 }
 
 function buildPrompt(input: AnalyzeRequest, referenceData: string): string {
@@ -191,13 +197,15 @@ ${referenceData}
 
 [엄격한 AI 분석 지침]
 1. 제공된 [전세사기 및 독소조항 피해 패턴 DB]의 실제 피해 조건들과 사용자가 제출한 계약서/등기부등본 텍스트를 1:1로 정밀 대조하세요.
-2. 만약 DB에 등록된 대항력 악용, 신탁 부동산, 바지사장 넘기기, 과도한 원상복구 등 위험 패턴이 발견된다면, hugLandlordCheck.isBlacklisted를 true로 설정하고, overallScore(종합점수)는 무조건 40점 미만(danger)으로 낮추세요. hugLandlordCheck는 어디까지나 패턴 DB 기반 "추정"이며 실제 임대인 신원을 확인한 결과가 아니라는 점을 reason에서도 분명히 하세요.
+2. 만약 DB에 등록된 대항력 악용, 신탁 부동산, 바지사장 넘기기, 과도한 원상복구 등 위험 패턴이 발견된다면, hugLandlordCheck.isBlacklisted를 true로 설정하고, overallScore(종합점수)는 무조건 40점 미만(danger)으로 낮추세요. hugLandlordCheck는 어디까지나 패턴 DB 기반 "추정"이며 실제 임대인 신원을 확인한 결과가 아니라는 점을 reason에서도(1문장) 분명히 하세요.
 3. 세입자가 이해하기 어려운 법률 용어(대항력, 신탁, 당해세 등)는 쉽게 풀어서 설명하고, DB에 제시된 '권장 대처 및 방어 특약' 내용을 recommendedActions에 적극 반영하세요.
 4. 데이터베이스에 명시된 사실과 규칙에 철저히 기반하여 답변하고, 근거 없는 거짓말(환각 현상)을 엄격히 차단하세요.
-5. 권리관계, 특약사항, 전세가율, 건물상태 4개 항목을 각각 0~100점(높을수록 안전)으로 평가하세요.
-6. 첨부된 문서가 있다면 위험하거나 주의가 필요한 조항을 detectedClauses에 구체적으로 추출하세요. 첨부 문서가 없다면 빈 배열([])로 두세요.
+5. 권리관계, 특약사항, 전세가율, 건물상태 4개 항목을 각각 0~100점(높을수록 안전)으로 평가하세요. comment는 1문장으로 간결하게 쓰세요.
+6. 첨부된 문서가 있다면 위험하거나 주의가 필요한 조항을 detectedClauses에 구체적으로 추출하세요(explanation은 1~2문장). 첨부 문서가 없다면 빈 배열([])로 두세요.
 7. 첨부된 문서에서 임대인(소유자) 성명이 확인되면 landlordName에 그대로 적으세요. 확인할 수 없으면 빈 문자열로 두세요.
-8. 반드시 지정된 JSON 스키마 형식으로만 응답을 반환하세요.`
+8. recommendedActions는 가장 중요한 3~5개만 문장으로 나열하세요.
+9. aiComment는 2~3문장으로 핵심만 요약하세요.
+10. 불필요하게 길게 쓰지 말고, 위 문장 수 제한을 반드시 지켜 간결하게 응답하세요. 반드시 지정된 JSON 스키마 형식으로만 응답을 반환하세요.`
 }
 
 /** contract_risk_patterns 전체를 가져온다. 20건 내외의 작은 지식베이스라 키워드 검색 없이

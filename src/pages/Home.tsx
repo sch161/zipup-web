@@ -1,5 +1,6 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import AnalyzingOverlay from "../components/ui/AnalyzingOverlay";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import Input from "../components/ui/Input";
@@ -68,6 +69,8 @@ export default function Home() {
 
   return (
     <div className="flex flex-col gap-5 px-5 pt-6 lg:gap-8 lg:px-0 lg:pt-0">
+      {loading && <AnalyzingOverlay />}
+
       {/* 모바일 전용 헤더 — 데스크톱은 TopNav가 대신함 */}
       <header className="flex items-center justify-between lg:hidden">
         <h1 className="text-lg font-bold text-primary">ZIPUP 🏠</h1>
