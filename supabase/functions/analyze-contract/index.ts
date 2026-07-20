@@ -128,10 +128,13 @@ interface GeminiCallResult {
   bodyText: string
 }
 
-/** Gemini generateContent 호출. 429/503이면 지수 백오프(1초, 3초)로 최대 2회 더 재시도하고,
- *  그래도 실패하면 마지막 응답을 그대로 반환한다(호출자가 사용자 에러 처리). */
+/** Gemini generateContent 호출. 429/503 에러 응답뿐 아니라 응답 자체가 늦어져 타임아웃(AbortError)
+ *  나는 경우도 지수 백오프(1초, 3초)로 최대 2회 더 재시도한다. 마지막 시도까지 타임아웃이면
+ *  AbortError를 그대로 던지고(호출자가 "시간 초과" 메시지 처리), 마지막 시도까지 429/503이면
+ *  그 응답을 그대로 반환한다(호출자가 사용자 에러 처리). */
 async function callGeminiWithRetry(url: string, requestBody: unknown, timeoutMs: number): Promise<GeminiCallResult> {
   for (let attempt = 0; ; attempt++) {
+    const isLastAttempt = attempt >= GEMINI_RETRY_DELAYS_MS.length
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let res: Response
@@ -142,11 +145,17 @@ async function callGeminiWithRetry(url: string, requestBody: unknown, timeoutMs:
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       })
-    } finally {
+    } catch (err) {
       clearTimeout(timer)
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      if (!isTimeout || isLastAttempt) throw err
+      const delayMs = GEMINI_RETRY_DELAYS_MS[attempt]
+      console.error(`Gemini API timed out after ${timeoutMs}ms, retrying in ${delayMs}ms (attempt ${attempt + 2}/${GEMINI_RETRY_DELAYS_MS.length + 1})`)
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      continue
     }
+    clearTimeout(timer)
 
-    const isLastAttempt = attempt >= GEMINI_RETRY_DELAYS_MS.length
     if (res.ok || !GEMINI_RETRYABLE_STATUSES.has(res.status) || isLastAttempt) {
       const bodyText = await res.text()
       return { ok: res.ok, status: res.status, bodyText }
@@ -264,7 +273,7 @@ Deno.serve(async (req: Request) => {
           responseSchema: ANALYSIS_RESPONSE_SCHEMA,
         },
       },
-      20000,
+      28000,
     )
 
     if (!ok) {
