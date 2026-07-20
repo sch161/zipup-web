@@ -110,6 +110,48 @@ interface HugDefaulterMatch {
   similarity: number
 }
 
+// 429(RESOURCE_EXHAUSTED)/503(UNAVAILABLE)는 대개 일시적인 과부하/쿼터 순간 스파이크라
+// 잠깐 기다렸다 다시 보내면 성공하는 경우가 많다. 그 외 상태 코드(4xx 요청 오류 등)는
+// 재시도해도 똑같이 실패할 뿐이므로 즉시 반환한다.
+const GEMINI_RETRYABLE_STATUSES = new Set([429, 503])
+const GEMINI_RETRY_DELAYS_MS = [1000, 3000]
+
+interface GeminiCallResult {
+  ok: boolean
+  status: number
+  bodyText: string
+}
+
+/** Gemini generateContent 호출. 429/503이면 지수 백오프(1초, 3초)로 최대 2회 더 재시도하고,
+ *  그래도 실패하면 마지막 응답을 그대로 반환한다(호출자가 사용자 에러 처리). */
+async function callGeminiWithRetry(url: string, requestBody: unknown, timeoutMs: number): Promise<GeminiCallResult> {
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const isLastAttempt = attempt >= GEMINI_RETRY_DELAYS_MS.length
+    if (res.ok || !GEMINI_RETRYABLE_STATUSES.has(res.status) || isLastAttempt) {
+      const bodyText = await res.text()
+      return { ok: res.ok, status: res.status, bodyText }
+    }
+
+    const delayMs = GEMINI_RETRY_DELAYS_MS[attempt]
+    console.error(`Gemini API ${res.status}, retrying in ${delayMs}ms (attempt ${attempt + 2}/${GEMINI_RETRY_DELAYS_MS.length + 1})`)
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+  }
+}
+
 function formatRiskPatterns(patterns: RiskPattern[]): string {
   if (patterns.length === 0) return '(관련 참고 사례 없음)'
   return patterns
@@ -159,23 +201,19 @@ async function extractKeywords(input: AnalyzeRequest): Promise<string[]> {
   }
 
   try {
-    const res = await fetch(
+    const { ok, bodyText } = await callGeminiWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: KEYWORD_EXTRACTION_SCHEMA,
-          },
-        }),
-        signal: AbortSignal.timeout(10000),
+        contents: [{ role: 'user', parts }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: KEYWORD_EXTRACTION_SCHEMA,
+        },
       },
+      10000,
     )
-    if (!res.ok) return []
-    const json = await res.json()
+    if (!ok) return []
+    const json = JSON.parse(bodyText)
     const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text
     if (!text) return []
     const parsed = JSON.parse(text)
@@ -269,43 +307,35 @@ Deno.serve(async (req: Request) => {
     elapsedMs: 0,
   }
   const startedAt = Date.now()
-  const controller = new AbortController()
-  const abortTimer = setTimeout(() => controller.abort(), 20000)
 
   try {
-    const geminiRes = await fetch(
+    const { ok, status, bodyText } = await callGeminiWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: ANALYSIS_RESPONSE_SCHEMA,
-          },
-        }),
-        signal: controller.signal,
+        contents: [{ role: 'user', parts }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: ANALYSIS_RESPONSE_SCHEMA,
+        },
       },
+      20000,
     )
-    clearTimeout(abortTimer)
     debugMeta.elapsedMs = Date.now() - startedAt
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text()
-      console.error('Gemini API error', geminiRes.status, errText)
+    if (!ok) {
+      console.error('Gemini API error', status, bodyText)
       return jsonResponse(
         {
           error: 'AI 분석 요청에 실패했습니다. 잠시 후 다시 시도해주세요.',
-          debugStatus: geminiRes.status,
-          debugText: errText.slice(0, 1000),
+          debugStatus: status,
+          debugText: bodyText.slice(0, 1000),
           debugMeta,
         },
         502,
       )
     }
 
-    const geminiJson = await geminiRes.json()
+    const geminiJson = JSON.parse(bodyText)
     const text: string | undefined = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text
 
     if (!text) {
@@ -350,7 +380,6 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse(result)
   } catch (err) {
-    clearTimeout(abortTimer)
     debugMeta.elapsedMs = Date.now() - startedAt
     console.error('analyze-contract error', err)
     if (err instanceof Error && err.name === 'AbortError') {
