@@ -104,6 +104,24 @@ export default function Analysis() {
           </div>
         )}
 
+        {result.hugLandlordCheck?.isBlacklisted && (
+          <div className="mt-4 flex items-start gap-2 rounded-card border border-warning bg-warning-bg p-3 lg:mt-6">
+            <Chip tone="warning" className="shrink-0">
+              AI 위험 패턴 감지
+            </Chip>
+            <p className="text-[11px] leading-relaxed text-text-dark">
+              {result.hugLandlordCheck.reason}
+              <br />
+              <span className="text-text-gray">
+                * 실제 명단 대조가 아니라 AI가 알려진 사기 피해 패턴과 계약서 내용을 비교해 추정한 결과예요.
+                {result.hugDefaulterMatch?.matched
+                  ? ''
+                  : ' 위 HUG 공식 명단 일치와는 별개의 참고 정보이니 함께 확인하세요.'}
+              </span>
+            </p>
+          </div>
+        )}
+
         {/* 모바일: 세로 스택(DOM 순서 그대로). 데스크톱(lg): 좌(넓게)/우(사이드바) 2단 그리드로 명시적 배치 */}
         <div className="mt-4 flex flex-col gap-4 lg:mt-6 lg:grid lg:grid-cols-[1fr_360px] lg:items-start lg:gap-6">
           {/* 종합 위험도 점수 */}

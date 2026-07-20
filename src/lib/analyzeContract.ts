@@ -27,6 +27,13 @@ export interface HugDefaulterMatchResult {
   matches: HugDefaulterMatch[]
 }
 
+/** contract_risk_patterns 피해 사례와 계약서 내용을 AI가 대조한 "추정" 결과.
+ * hug_defaulters 실명단을 대조하는 HugDefaulterMatchResult보다 신뢰도가 낮다. */
+export interface HugLandlordCheck {
+  isBlacklisted: boolean
+  reason: string
+}
+
 export interface AnalysisResult {
   overallScore: number
   riskLevel: RiskLevel
@@ -36,6 +43,7 @@ export interface AnalysisResult {
   aiComment: string
   landlordName?: string
   hugDefaulterMatch?: HugDefaulterMatchResult
+  hugLandlordCheck?: HugLandlordCheck
 }
 
 export interface AnalyzeContractInput {
