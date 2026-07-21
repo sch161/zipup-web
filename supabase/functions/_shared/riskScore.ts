@@ -80,7 +80,7 @@ export function calculateRisk(
   const jScore = jeonseRatioScore(jeonseRatio)
   const hScore = hugDefaulterScore(hugDefaulterCount ?? 0)
   const nScore = newsMentionScore(newsMentions ?? 0)
-  const riskScore = Math.round((jScore * 0.5 + hScore * 0.3 + nScore * 0.2) * 10) / 10
+  const riskScore = Math.round((jScore * 0.3 + hScore * 0.5 + nScore * 0.2) * 10) / 10
   const riskLevel: RiskLevel = riskScore >= 70 ? '위험' : riskScore >= 40 ? '주의' : '안전'
 
   return { riskScore, riskLevel }
