@@ -68,7 +68,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col gap-5 px-5 pt-6 lg:gap-8 lg:px-0 lg:pt-0">
+    <div className="flex flex-col gap-5 px-5 pt-6 lg:mx-auto lg:max-w-[960px] lg:flex-1 lg:justify-center lg:gap-8 lg:px-0">
       {loading && <AnalyzingOverlay />}
 
       {/* 모바일 전용 헤더 — 데스크톱은 TopNav가 대신함 */}
@@ -234,7 +234,10 @@ export default function Home() {
                 분석하기"를 눌러야 분석이 시작돼요.
               </p>
             )}
-            <label htmlFor="scan-upload-desktop" className="mt-3 block cursor-pointer">
+            <label
+              htmlFor="scan-upload-desktop"
+              className="mt-3 block cursor-pointer"
+            >
               <span className="flex items-center justify-center rounded-full bg-primary px-4 py-[10px] text-[11px] font-bold text-white shadow-btn">
                 {file ? `✓ ${file.name}` : "파일 선택하기"}
               </span>
@@ -249,7 +252,9 @@ export default function Home() {
           </div>
 
           <div>
-            <h2 className="text-sm font-semibold text-text-dark">매물 기본 정보</h2>
+            <h2 className="text-sm font-semibold text-text-dark">
+              매물 기본 정보
+            </h2>
             <form onSubmit={handleAnalyze} className="mt-3 flex flex-col gap-3">
               <Input
                 id="address-lg"
@@ -287,7 +292,9 @@ export default function Home() {
         </Card>
 
         <div className="flex flex-col">
-          <h2 className="text-sm font-semibold text-text-dark">뉴스 살펴보기</h2>
+          <h2 className="text-sm font-semibold text-text-dark">
+            뉴스 살펴보기
+          </h2>
           <p className="mt-[6px] text-xs font-medium text-primary-dark">
             최근 발생한 전세사기 관련 뉴스를 확인해 보세요
           </p>
@@ -297,11 +304,16 @@ export default function Home() {
             ) : newsError ? (
               <p className="text-xs text-danger">{newsError}</p>
             ) : newsItems.length === 0 ? (
-              <p className="text-xs text-text-gray">아직 등록된 뉴스가 없어요.</p>
+              <p className="text-xs text-text-gray">
+                아직 등록된 뉴스가 없어요.
+              </p>
             ) : (
               <ul className="flex flex-1 flex-col justify-between divide-y divide-border">
                 {newsItems.map((item) => (
-                  <li key={item.id} className="flex flex-col justify-center py-3 first:pt-0 last:pb-0">
+                  <li
+                    key={item.id}
+                    className="flex flex-col justify-center py-3 first:pt-0 last:pb-0"
+                  >
                     <a
                       href={item.url}
                       target="_blank"
