@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import BrokenText from '../components/ui/BrokenText'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import TopNav from '../components/TopNav'
@@ -84,7 +83,9 @@ export default function Signup() {
             안심하고 시작해요
           </h1>
           <p className="mt-4 max-w-[420px] text-[16.5px] leading-relaxed text-text-gray">
-            <BrokenText text="계약서 위험 분석, 지역별 위험도, 마음 상담까지 하나의 계정으로 이용하세요." />
+            계약서 위험 분석, 지역별 위험도, 마음 상담까지
+            <br />
+            하나의 계정으로 이용하세요.
           </p>
         </div>
 
