@@ -121,7 +121,11 @@ export default function Home() {
             위험을 먼저 확인하세요
           </h2>
           <p className="mt-5 max-w-[440px] text-[17px] leading-relaxed text-text-gray">
-            <BrokenText text="AI가 부동산 계약서의 위험 요소를 꼼꼼히 분석하고, 살고 싶은 동네의 주거 위험도까지 알려드려요. 처음 서울 살이, 이제 혼자 걱정하지 마세요." />
+            AI가 부동산 계약서의 위험 요소를 꼼꼼히 분석하고,
+            <br />
+            살고 싶은 동네의 주거 위험도까지 알려드려요.
+            <br />
+            처음 서울 살이, 이제 혼자 걱정하지 마세요.
           </p>
           <div className="mt-8 flex flex-col gap-3">
             {TRUST_FACTS.map((fact) => (
@@ -130,8 +134,9 @@ export default function Home() {
                   ✓
                 </span>
                 <p className="text-[13.5px] leading-relaxed text-text-gray">
-                  <span className="font-bold text-text-dark">{fact.title}</span>{" "}
-                  <BrokenText text={fact.body} />
+                  <span className="font-bold text-text-dark">{fact.title}</span>
+                  <br />
+                  {fact.body}
                 </p>
               </div>
             ))}

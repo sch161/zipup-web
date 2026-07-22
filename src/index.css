@@ -25,7 +25,7 @@ body {
 .app-shell {
   max-width: 430px;
   margin: 0 auto;
-  min-height: 100vh;
+  min-height: 90vh;
   background: #ffffff;
   position: relative;
   display: flex;
