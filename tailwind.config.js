@@ -5,43 +5,46 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#FF6B35',
-          dark: '#E85D04',
-          bg: '#FFE8D6',
+          DEFAULT: '#F0660D',
+          dark: '#9B3B11',
+          bg: '#FDE3D3',
         },
-        bg: '#FFF8F3',
+        bg: '#FFF5F4',
         card: '#FFFFFF',
         text: {
           dark: '#1A1A1A',
-          gray: '#8A8A8A',
-          lightgray: '#C9BEB6',
+          gray: '#454545',
+          lightgray: '#9E9E9E',
         },
-        border: '#F0E4DC',
+        border: {
+          DEFAULT: '#E0926B',
+          input: '#9E9E9E',
+        },
         danger: {
-          DEFAULT: '#E63946',
-          bg: '#FDE2E2',
+          DEFAULT: '#FF4646',
+          bg: '#FFDBDB',
         },
         warning: {
-          DEFAULT: '#FFAA00',
-          bg: '#FFF3D6',
+          DEFAULT: '#FF893D',
+          bg: '#FFE7D3',
         },
         success: {
-          DEFAULT: '#2EBD59',
-          bg: '#E3F8EA',
+          DEFAULT: '#006F34',
+          bg: '#CFFFC9',
         },
       },
       fontFamily: {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
-        card: '20px',
-        btn: '26px',
-        input: '12px',
+        card: '30px',
+        btn: '9999px',
+        input: '10px',
         chip: '20px',
       },
       boxShadow: {
-        card: '0 3px 14px rgba(0,0,0,0.05)',
-        btn: '0 4px 12px rgba(255,107,53,0.35)',
+        card: '0 2px 10px rgba(155,59,17,0.08)',
+        btn: '0 4px 14px rgba(240,102,13,0.3)',
       },
       maxWidth: {
         app: '430px',

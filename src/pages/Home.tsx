@@ -26,7 +26,7 @@ export default function Home() {
   const [newsError, setNewsError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchLatestNews(5)
+    fetchLatestNews(7)
       .then(setNewsItems)
       .catch((err) =>
         setNewsError(
@@ -92,49 +92,7 @@ export default function Home() {
         </div>
       </header>
 
-      {/* 데스크톱 전용 히어로 배너 */}
-      <section className="hidden items-center justify-between gap-10 rounded-card border border-border bg-white p-10 shadow-card lg:flex">
-        <div className="max-w-[420px]">
-          <h2 className="text-2xl font-bold leading-snug text-text-dark">
-            계약 전, <span className="text-primary">AI로 위험을</span> 먼저
-            확인하세요
-          </h2>
-          <p className="mt-3 text-sm leading-relaxed text-text-gray">
-            등기부등본이나 계약서를 업로드하면 AI가 위험 조항을 자동으로
-            찾아드려요.
-          </p>
-          <label
-            htmlFor="scan-upload-desktop"
-            className="mt-6 inline-flex cursor-pointer"
-          >
-            <span className="inline-flex h-12 items-center rounded-btn bg-primary px-6 text-sm font-bold text-white shadow-btn">
-              {file ? `✓ ${file.name}` : "파일 선택하기"}
-            </span>
-            <input
-              id="scan-upload-desktop"
-              type="file"
-              accept="image/*,.pdf"
-              className="hidden"
-              onChange={handleFileChange}
-            />
-          </label>
-          <p className="mt-2 text-[11px] text-text-lightgray">
-            PDF, JPG, PNG만 지원돼요. 한글(HWP) 파일은 한글에서 "다른 이름으로
-            저장 → PDF"로 변환한 후 올려주세요.
-          </p>
-          {file && (
-            <p className="mt-1 text-[11px] font-medium text-primary-dark">
-              파일이 선택됐어요. 아래에서 매물 정보를 입력하고 "위험도
-              분석하기"를 눌러야 분석이 시작돼요.
-            </p>
-          )}
-        </div>
-        <div className="flex h-40 w-40 shrink-0 items-center justify-center rounded-card bg-primary-bg text-6xl">
-          🔎
-        </div>
-      </section>
-
-      {/* AI 스캔 배너 카드 (모바일 전용, 데스크톱은 위 히어로가 대신함) */}
+      {/* AI 스캔 배너 카드 (모바일 전용, 데스크톱은 아래 왼쪽 카드 상단이 대신함) */}
       <Card className="border-primary/40 bg-white lg:hidden">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-bg text-lg">
@@ -179,8 +137,8 @@ export default function Home() {
         )}
       </Card>
 
-      {/* 매물 기본 정보 + 최근 뉴스: 모바일은 세로 스택, 데스크톱(lg)은 2단 그리드 */}
-      <div className="flex flex-col gap-5 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6">
+      {/* 매물 기본 정보 + 뉴스 살펴보기 (모바일 전용, 세로 스택) */}
+      <div className="flex flex-col gap-5 lg:hidden">
         {/* 매물 기본 정보 입력 카드 */}
         <Card>
           <h2 className="text-sm font-bold text-text-dark">매물 기본 정보</h2>
@@ -188,15 +146,15 @@ export default function Home() {
             <Input
               id="address"
               label="매물 주소"
-              placeholder="예) 서울시 관악구 신림동"
+              placeholder="서울 관악구 신림동"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               required
             />
             <Input
               id="deposit"
-              label="전세보증금 (만원)"
-              placeholder="예) 25000"
+              label="전세 보증금 (만원)"
+              placeholder="25000"
               inputMode="numeric"
               value={deposit}
               onChange={(e) => setDeposit(e.target.value)}
@@ -205,7 +163,7 @@ export default function Home() {
             <Input
               id="buildingType"
               label="건물 유형"
-              placeholder="예) 다세대주택, 오피스텔"
+              placeholder="다세대주택"
               value={buildingType}
               onChange={(e) => setBuildingType(e.target.value)}
             />
@@ -219,11 +177,12 @@ export default function Home() {
           </form>
         </Card>
 
-        {/* 최근 전세사기 뉴스 카드 */}
-        <Card className="mb-4 lg:mb-0">
-          <h2 className="text-sm font-bold text-text-dark">
-            최근 전세사기 관련 뉴스
-          </h2>
+        {/* 뉴스 살펴보기 카드 */}
+        <Card className="mb-4">
+          <h2 className="text-sm font-bold text-text-dark">뉴스 살펴보기</h2>
+          <p className="mt-1 text-xs font-medium text-primary-dark">
+            최근 발생한 전세사기 관련 뉴스를 확인해 보세요
+          </p>
           {newsLoading ? (
             <p className="mt-3 text-xs text-text-gray">뉴스를 불러오는 중...</p>
           ) : newsError ? (
@@ -240,19 +199,126 @@ export default function Home() {
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs font-medium leading-snug text-text-dark hover:text-primary"
+                    className="block truncate text-xs font-medium leading-snug text-text-gray hover:text-primary"
                   >
                     {item.title}
                   </a>
-                  <p className="mt-1 text-[10px] text-text-gray">
+                  <p className="mt-1 text-[10px] text-text-lightgray">
                     {formatNewsDate(item.published_at)}
-                    {item.media && ` · ${item.media}`}
                   </p>
                 </li>
               ))}
             </ul>
           )}
         </Card>
+      </div>
+
+      {/* 데스크톱 전용: 왼쪽(히어로+매물 기본 정보 통합 카드) + 오른쪽(뉴스 살펴보기) 2단 */}
+      <div className="hidden lg:grid lg:grid-cols-[59fr_41fr] lg:items-stretch lg:gap-4">
+        <Card className="flex flex-col gap-5 lg:py-[22px] lg:pl-[19px] lg:pr-[22px]">
+          <div>
+            <h2 className="text-[19px] font-bold leading-snug text-text-dark">
+              계약 전, 여기서 먼저 위험을 확인하세요
+            </h2>
+            <p className="mt-[10px] text-[13px] leading-relaxed text-text-gray">
+              등기부등본이나 계약서를 업로드하면 AI가 위험 조항을 자동으로
+              찾아드려요!
+            </p>
+            <p className="mt-[6px] text-[10px] text-text-lightgray">
+              PDF, JPG, PNG만 지원되니 한글(HWP) 파일은 한글에서 "다른 이름으로
+              저장 → PDF"로 변환한 후 올려주세요.
+            </p>
+            {file && (
+              <p className="mt-1 text-[10px] font-medium text-primary-dark">
+                파일이 선택됐어요. 아래에서 매물 정보를 입력하고 "위험도
+                분석하기"를 눌러야 분석이 시작돼요.
+              </p>
+            )}
+            <label htmlFor="scan-upload-desktop" className="mt-3 block cursor-pointer">
+              <span className="flex items-center justify-center rounded-full bg-primary px-4 py-[10px] text-[11px] font-bold text-white shadow-btn">
+                {file ? `✓ ${file.name}` : "파일 선택하기"}
+              </span>
+              <input
+                id="scan-upload-desktop"
+                type="file"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={handleFileChange}
+              />
+            </label>
+          </div>
+
+          <div>
+            <h2 className="text-sm font-semibold text-text-dark">매물 기본 정보</h2>
+            <form onSubmit={handleAnalyze} className="mt-3 flex flex-col gap-3">
+              <Input
+                id="address-lg"
+                label="매물 주소"
+                placeholder="서울 관악구 신림동"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                required
+              />
+              <Input
+                id="deposit-lg"
+                label="전세 보증금 (만원)"
+                placeholder="25000"
+                inputMode="numeric"
+                value={deposit}
+                onChange={(e) => setDeposit(e.target.value)}
+                required
+              />
+              <Input
+                id="buildingType-lg"
+                label="건물 유형"
+                placeholder="다세대주택"
+                value={buildingType}
+                onChange={(e) => setBuildingType(e.target.value)}
+              />
+              {error && (
+                <p className="text-xs font-medium text-danger">{error}</p>
+              )}
+
+              <Button type="submit" className="mt-1" disabled={loading}>
+                {loading ? "AI가 분석하는 중..." : "위험도 분석하기"}
+              </Button>
+            </form>
+          </div>
+        </Card>
+
+        <div className="flex flex-col">
+          <h2 className="text-sm font-semibold text-text-dark">뉴스 살펴보기</h2>
+          <p className="mt-[6px] text-xs font-medium text-primary-dark">
+            최근 발생한 전세사기 관련 뉴스를 확인해 보세요
+          </p>
+          <Card className="mt-3 flex flex-1 flex-col lg:py-[22px] lg:pl-[19px] lg:pr-[22px]">
+            {newsLoading ? (
+              <p className="text-xs text-text-gray">뉴스를 불러오는 중...</p>
+            ) : newsError ? (
+              <p className="text-xs text-danger">{newsError}</p>
+            ) : newsItems.length === 0 ? (
+              <p className="text-xs text-text-gray">아직 등록된 뉴스가 없어요.</p>
+            ) : (
+              <ul className="flex flex-1 flex-col justify-between divide-y divide-border">
+                {newsItems.map((item) => (
+                  <li key={item.id} className="flex flex-col justify-center py-3 first:pt-0 last:pb-0">
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block truncate text-xs font-medium leading-snug text-text-gray hover:text-primary"
+                    >
+                      {item.title}
+                    </a>
+                    <p className="mt-1 text-[10px] text-text-lightgray">
+                      {formatNewsDate(item.published_at)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </div>
       </div>
     </div>
   );

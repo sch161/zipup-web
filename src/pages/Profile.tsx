@@ -23,6 +23,8 @@ const CONTRACT_LABEL = { danger: '위험', warning: '주의', success: '안전' 
 const CONTRACT_TONE = { danger: 'danger', warning: 'warning', success: 'success' } as const
 const CHAT_TONE = { 위험: 'danger', 주의: 'warning', 안전: 'success' } as const
 
+const HISTORY_PREVIEW_COUNT = 5
+
 function formatDate(value: string): string {
   const d = new Date(value)
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`
@@ -58,7 +60,7 @@ function DeleteAccountModal({
               type="button"
               onClick={onConfirm}
               disabled={loading}
-              className="h-12 w-full rounded-btn bg-danger text-sm font-bold text-white shadow-btn transition-opacity active:opacity-80 disabled:opacity-50"
+              className="h-12 w-full rounded-btn bg-danger text-sm font-bold text-white transition-opacity active:opacity-80 disabled:opacity-50"
             >
               {loading ? '삭제 중...' : '탈퇴하기'}
             </button>
@@ -79,6 +81,8 @@ export default function Profile() {
   const [gaslighting, setGaslighting] = useState<GaslightingHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [showAllContracts, setShowAllContracts] = useState(false)
+  const [showAllGaslighting, setShowAllGaslighting] = useState(false)
 
   const [riskAlerts, setRiskAlerts] = useState(true)
   const [analysisAlerts, setAnalysisAlerts] = useState(true)
@@ -170,14 +174,15 @@ export default function Profile() {
         </div>
       </Card>
 
-      {/* 내 분석 이력 */}
+      {/* 활동 내역 보기 */}
       <Card className="p-0">
-        <div className="flex border-b border-border">
+        <h2 className="px-4 pt-4 text-sm font-bold text-text-dark">활동 내역 보기</h2>
+        <div className="mt-3 flex border-b border-border">
           <button
             type="button"
             onClick={() => setTab('contract')}
             className={`flex-1 py-3 text-center text-sm font-bold transition-colors ${
-              tab === 'contract' ? 'border-b-2 border-primary text-primary' : 'text-text-gray'
+              tab === 'contract' ? 'border-b-2 border-primary text-primary' : 'text-text-lightgray'
             }`}
           >
             계약서 스캔
@@ -186,7 +191,7 @@ export default function Profile() {
             type="button"
             onClick={() => setTab('gaslighting')}
             className={`flex-1 py-3 text-center text-sm font-bold transition-colors ${
-              tab === 'gaslighting' ? 'border-b-2 border-primary text-primary' : 'text-text-gray'
+              tab === 'gaslighting' ? 'border-b-2 border-primary text-primary' : 'text-text-lightgray'
             }`}
           >
             심리 가드
@@ -208,28 +213,39 @@ export default function Profile() {
                 </Link>
               </div>
             ) : (
-              <ul className="flex flex-col divide-y divide-border">
-                {analyses.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => navigate('/analysis', { state: { result: toAnalysisResult(item) } })}
-                      className="flex w-full items-center justify-between gap-3 py-3 text-left"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-text-dark">{item.address || '주소 미입력'}</p>
-                        <p className="mt-0.5 text-[11px] text-text-gray">{formatDate(item.created_at)}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Chip tone={CONTRACT_TONE[item.risk_level]}>
-                          {CONTRACT_LABEL[item.risk_level]} · {item.overall_score}점
-                        </Chip>
-                        <span className="text-text-lightgray">›</span>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="flex flex-col divide-y divide-border">
+                  {(showAllContracts ? analyses : analyses.slice(0, HISTORY_PREVIEW_COUNT)).map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/analysis', { state: { result: toAnalysisResult(item) } })}
+                        className="flex w-full items-center justify-between gap-3 py-3 text-left"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium text-text-dark">{item.address || '주소 미입력'}</p>
+                          <p className="mt-0.5 text-[11px] text-text-gray">{formatDate(item.created_at)}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Chip tone={CONTRACT_TONE[item.risk_level]}>
+                            {CONTRACT_LABEL[item.risk_level]} · {item.overall_score}점
+                          </Chip>
+                          <span className="text-text-lightgray">›</span>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {analyses.length > HISTORY_PREVIEW_COUNT && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllContracts((v) => !v)}
+                    className="w-full border-t border-border py-2.5 text-center text-xs font-bold text-primary"
+                  >
+                    {showAllContracts ? '접기' : `전체보기 (총 ${analyses.length}개)`}
+                  </button>
+                )}
+              </>
             )
           )}
 
@@ -242,28 +258,39 @@ export default function Profile() {
                 </Link>
               </div>
             ) : (
-              <ul className="flex flex-col divide-y divide-border">
-                {gaslighting.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/psych-guard/${item.id}`)}
-                      className="flex w-full items-center justify-between gap-3 py-3 text-left"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-text-dark">{item.input_text}</p>
-                        <p className="mt-0.5 text-[11px] text-text-gray">{formatDate(item.created_at)}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Chip tone={CHAT_TONE[item.risk_level]}>
-                          {item.risk_level} · {item.confidence}%
-                        </Chip>
-                        <span className="text-text-lightgray">›</span>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="flex flex-col divide-y divide-border">
+                  {(showAllGaslighting ? gaslighting : gaslighting.slice(0, HISTORY_PREVIEW_COUNT)).map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/psych-guard/${item.id}`)}
+                        className="flex w-full items-center justify-between gap-3 py-3 text-left"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium text-text-dark">{item.input_text}</p>
+                          <p className="mt-0.5 text-[11px] text-text-gray">{formatDate(item.created_at)}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Chip tone={CHAT_TONE[item.risk_level]}>
+                            {item.risk_level} · {item.confidence}%
+                          </Chip>
+                          <span className="text-text-lightgray">›</span>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {gaslighting.length > HISTORY_PREVIEW_COUNT && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllGaslighting((v) => !v)}
+                    className="w-full border-t border-border py-2.5 text-center text-xs font-bold text-primary"
+                  >
+                    {showAllGaslighting ? '접기' : `전체보기 (총 ${gaslighting.length}개)`}
+                  </button>
+                )}
+              </>
             )
           )}
         </div>
@@ -306,7 +333,7 @@ export default function Profile() {
         </Link>
         <div className="border-t border-border" />
         <div className="flex items-center justify-between px-4 py-3.5 text-sm font-medium text-text-dark">
-          고객센터
+          고객 센터
           <a href={`mailto:${SUPPORT_EMAIL}`} className="text-xs font-bold text-primary">
             {SUPPORT_EMAIL}
           </a>
@@ -315,7 +342,7 @@ export default function Profile() {
 
       {/* 로그아웃 / 회원탈퇴 */}
       <div className="flex flex-col items-center gap-3 pb-4">
-        <Button variant="outline" type="button" onClick={handleLogout}>
+        <Button type="button" onClick={handleLogout}>
           로그아웃
         </Button>
         <button

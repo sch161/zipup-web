@@ -20,41 +20,36 @@ export default function TopNav({ variant = 'app' }: TopNavProps) {
   }
 
   return (
-    <header className="hidden h-[76px] w-full shrink-0 items-center border-b border-border bg-white lg:flex">
-      <div className="mx-auto flex w-full max-w-[960px] items-center justify-between px-6">
-        <Link to={variant === 'app' ? '/home' : '/'} className="text-[22px] font-bold text-primary">
-          ZIPUP
+    <header className="hidden h-[72px] w-full shrink-0 items-center border-b border-border bg-white lg:flex">
+      <div className="mx-auto flex w-full max-w-[960px] items-center justify-between px-8">
+        <Link to={variant === 'app' ? '/home' : '/'} className="flex items-center">
+          <img src="/illustrations/logo.svg" alt="ZIPUP" className="h-[22px]" />
         </Link>
 
-        {variant === 'app' && (
-          <nav className="flex items-center gap-8">
+        {variant === 'app' ? (
+          <nav className="flex items-center gap-7">
             {menuItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `text-sm ${isActive ? 'font-bold text-primary' : 'font-medium text-text-gray'}`
+                  isActive ? 'text-base font-semibold text-primary' : 'text-sm font-medium text-text-lightgray'
                 }
               >
                 {item.label}
               </NavLink>
             ))}
-          </nav>
-        )}
-
-        {variant === 'app' ? (
-          <div className="flex items-center gap-4">
-            <button type="button" onClick={handleLogout} className="text-sm font-medium text-text-gray">
+            <button type="button" onClick={handleLogout} className="text-sm font-medium text-text-lightgray">
               로그아웃
             </button>
             <Link
               to="/profile"
               aria-label="프로필"
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-bg text-lg"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-primary-dark bg-white"
             >
-              👤
+              <img src="/illustrations/person.svg" alt="" className="h-[18px] w-[18px]" />
             </Link>
-          </div>
+          </nav>
         ) : (
           <div className="flex items-center gap-3">
             <Link to="/login" className="text-sm font-bold text-primary">

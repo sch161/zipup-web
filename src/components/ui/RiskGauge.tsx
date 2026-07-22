@@ -8,9 +8,9 @@ interface RiskGaugeProps {
 }
 
 const levelStrokeColor: Record<GaugeLevel, string> = {
-  danger: '#E63946',
-  warning: '#FFAA00',
-  success: '#2EBD59',
+  danger: '#FF4646',
+  warning: '#FF893D',
+  success: '#006F34',
 }
 
 export default function RiskGauge({ score, level, size = 140, strokeWidth = 12 }: RiskGaugeProps) {
@@ -22,7 +22,7 @@ export default function RiskGauge({ score, level, size = 140, strokeWidth = 12 }
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#F0E4DC" strokeWidth={strokeWidth} />
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#EEDFD6" strokeWidth={strokeWidth} />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -37,8 +37,7 @@ export default function RiskGauge({ score, level, size = 140, strokeWidth = 12 }
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold text-text-dark">{clamped}</span>
-        <span className="text-[10px] text-text-gray">/ 100</span>
+        <span className="text-xl font-semibold text-primary">{clamped}점</span>
       </div>
     </div>
   )
