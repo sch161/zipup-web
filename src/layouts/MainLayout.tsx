@@ -6,7 +6,7 @@ export default function MainLayout() {
   return (
     <div className="flex min-h-screen flex-col bg-bg">
       <TopNav variant="app" />
-      <div className="mx-auto flex w-full max-w-app flex-1 flex-col pb-4 lg:max-w-[960px] lg:px-8 lg:pb-16 lg:pt-8">
+      <div className="mx-auto flex w-full max-w-app flex-1 flex-col pb-4 lg:max-w-none lg:px-0 lg:pb-0 lg:pt-0">
         <Outlet />
       </div>
       <BottomNav />

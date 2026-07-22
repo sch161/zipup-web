@@ -19,7 +19,7 @@ export default function Toggle({ checked, onChange, label, description }: Toggle
         aria-label={label}
         onClick={() => onChange(!checked)}
         className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-          checked ? 'justify-end bg-primary' : 'justify-start bg-[#D9D9D9]'
+          checked ? 'justify-end bg-primary' : 'justify-start bg-[#DAD7D0]'
         }`}
       >
         <span className="h-5 w-5 rounded-full bg-white shadow-card" />

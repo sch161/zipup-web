@@ -3,48 +3,52 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      screens: {
+        lg: '900px',
+      },
       colors: {
         primary: {
-          DEFAULT: '#F0660D',
-          dark: '#9B3B11',
-          bg: '#FDE3D3',
+          DEFAULT: '#FF5A1F',
+          dark: '#D8480F',
+          bg: '#FFF3EC',
         },
-        bg: '#FFF5F4',
+        bg: '#FFFFFF',
         card: '#FFFFFF',
+        subtle: '#F7F6F3',
         text: {
-          dark: '#1A1A1A',
-          gray: '#454545',
-          lightgray: '#9E9E9E',
+          dark: '#17171A',
+          gray: '#5F5E59',
+          lightgray: '#8A897F',
         },
         border: {
-          DEFAULT: '#E0926B',
-          input: '#9E9E9E',
+          DEFAULT: '#ECEBE7',
+          input: '#E4E2DD',
         },
         danger: {
-          DEFAULT: '#FF4646',
-          bg: '#FFDBDB',
+          DEFAULT: '#E5484D',
+          bg: '#FDF2F0',
         },
         warning: {
-          DEFAULT: '#FF893D',
-          bg: '#FFE7D3',
+          DEFAULT: '#E8912A',
+          bg: '#FDF6EA',
         },
         success: {
-          DEFAULT: '#006F34',
-          bg: '#CFFFC9',
+          DEFAULT: '#12A150',
+          bg: '#EAF8EF',
         },
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        sans: ['Pretendard', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
-        card: '30px',
-        btn: '9999px',
-        input: '10px',
-        chip: '20px',
+        card: '20px',
+        btn: '13px',
+        input: '12px',
+        chip: '999px',
       },
       boxShadow: {
-        card: '0 2px 10px rgba(155,59,17,0.08)',
-        btn: '0 4px 14px rgba(240,102,13,0.3)',
+        card: '0 2px 4px rgba(23,23,26,0.04), 0 20px 40px rgba(23,23,26,0.06)',
+        btn: '0 8px 20px rgba(255,90,31,0.28)',
       },
       maxWidth: {
         app: '430px',

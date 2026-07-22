@@ -1,20 +1,27 @@
+import { useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import BrokenText from '../components/ui/BrokenText'
 import Card from '../components/ui/Card'
 import Chip from '../components/ui/Chip'
 import RiskGauge from '../components/ui/RiskGauge'
 import TopNav from '../components/TopNav'
 import type { AnalysisResult, RiskLevel } from '../lib/analyzeContract'
 
+const LAST_ANALYSIS_KEY = 'zipup:lastAnalysis'
+
+function readLastAnalysis(): AnalysisResult | undefined {
+  try {
+    const raw = sessionStorage.getItem(LAST_ANALYSIS_KEY)
+    return raw ? (JSON.parse(raw) as AnalysisResult) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const levelLabel: Record<RiskLevel, string> = {
   danger: '위험',
   warning: '주의',
   success: '안전',
-}
-
-const levelHeadline: Record<RiskLevel, string> = {
-  danger: '이 매물은 위험 요소가 있어요',
-  warning: '이 매물은 주의가 필요해요',
-  success: '이 매물은 비교적 안전해요',
 }
 
 const levelBarColor: Record<RiskLevel, string> = {
@@ -27,6 +34,18 @@ const levelTextColor: Record<RiskLevel, string> = {
   danger: 'text-danger',
   warning: 'text-warning',
   success: 'text-success',
+}
+
+const levelBadgeBg: Record<RiskLevel, string> = {
+  danger: 'bg-danger-bg',
+  warning: 'bg-warning-bg',
+  success: 'bg-success-bg',
+}
+
+const levelRowStyle: Record<RiskLevel, string> = {
+  danger: 'border border-danger/25 bg-danger-bg',
+  warning: 'border border-warning/25 bg-warning-bg',
+  success: 'border border-success/25 bg-success-bg',
 }
 
 function BackButton({ onClick }: { onClick: () => void }) {
@@ -45,20 +64,27 @@ function BackButton({ onClick }: { onClick: () => void }) {
 export default function Analysis() {
   const navigate = useNavigate()
   const location = useLocation()
-  const result = (location.state as { result?: AnalysisResult } | null)?.result
+  const navState = (location.state as { result?: AnalysisResult } | null)?.result
+  const result = navState ?? readLastAnalysis()
+
+  useEffect(() => {
+    if (!navState) return
+    try {
+      sessionStorage.setItem(LAST_ANALYSIS_KEY, JSON.stringify(navState))
+    } catch {
+      // storage full or unavailable — the page still works, it just won't survive navigation
+    }
+  }, [navState])
 
   if (!result) {
     return (
       <div className="flex min-h-screen flex-col bg-bg">
         <TopNav variant="app" />
-        <div className="app-shell px-6 pt-6 text-center">
-          <div className="self-start">
-            <BackButton onClick={() => navigate(-1)} />
-          </div>
-          <div className="mt-16 text-4xl">📊</div>
+        <div className="app-shell justify-center px-6 text-center">
+          <div className="text-4xl">📊</div>
           <h1 className="mt-4 text-lg font-bold text-primary">위험도 분석 결과</h1>
           <p className="mt-2 text-sm text-text-gray">
-            분석 결과가 없어요. 홈에서 매물 정보를 입력하고 다시 시도해주세요.
+            <BrokenText text="분석 결과가 없어요. 홈에서 매물 정보를 입력하고 다시 시도해주세요." />
           </p>
           <Link to="/home" className="mt-6 text-sm font-bold text-primary">
             홈으로 돌아가기
@@ -79,13 +105,13 @@ export default function Analysis() {
 
         {result.hugDefaulterMatch?.matched && (
           <div className="mt-4 rounded-card border-2 border-danger bg-danger-bg p-4 lg:mt-6">
-            <p className="text-sm font-bold text-danger">
+            <p className="text-balance text-sm font-bold text-danger">
               ⚠️ HUG 상습 채무불이행자 명단에서 발견된 이름과 유사합니다
             </p>
             <p className="mt-1 text-xs leading-relaxed text-text-dark">
-              계약서에서 확인된 임대인 "{result.landlordName}"과(와) 이름이 유사한 인물이 HUG(주택도시보증공사)
-              상습채무불이행자 명단에 있어요. 동명이인일 수 있으니, 계약 전 반드시 신분증과 등기부등본상 소유자
-              정보를 직접 대조해 확인하세요.
+              <BrokenText
+                text={`계약서에서 확인된 임대인 "${result.landlordName}"과(와) 이름이 유사한 인물이 HUG(주택도시보증공사) 상습채무불이행자 명단에 있어요. 동명이인일 수 있으니, 계약 전 반드시 신분증과 등기부등본상 소유자 정보를 직접 대조해 확인하세요.`}
+              />
             </p>
             <ul className="mt-2 flex flex-col gap-1">
               {result.hugDefaulterMatch.matches.map((m, i) => (
@@ -102,7 +128,7 @@ export default function Analysis() {
             <Chip tone="warning" className="shrink-0">
               AI 위험 패턴 감지
             </Chip>
-            <p className="text-[11px] leading-relaxed text-text-dark">
+            <p className="text-pretty text-[11px] leading-relaxed text-text-dark">
               {result.hugLandlordCheck.reason}
               <br />
               <span className="text-text-gray">
@@ -115,96 +141,95 @@ export default function Analysis() {
           </div>
         )}
 
-        {/* 모바일: 세로 스택(DOM 순서 그대로). 데스크톱(lg): 점수+요약 한 행, 아래는 좌(카테고리+조항)/우(추천조치) 2열 */}
-        <div className="mt-4 flex flex-col gap-4 lg:mt-6 lg:gap-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:gap-4">
-            {/* 종합 위험도 점수 */}
-            <Card className="flex flex-col items-center gap-3 py-8 text-center lg:flex-[45] lg:flex-row lg:justify-start lg:gap-4 lg:py-5 lg:text-left">
-              <RiskGauge score={result.overallScore} level={result.riskLevel} size={110} strokeWidth={10} />
-              <div>
-                <Chip tone={result.riskLevel}>{levelLabel[result.riskLevel]}</Chip>
-                <p className="mt-2 text-sm font-bold text-text-dark">{levelHeadline[result.riskLevel]}</p>
+        <div className="mt-4 grid gap-4 lg:mt-6 lg:grid-cols-2 lg:items-start lg:gap-5">
+          {/* 왼쪽: 종합 위험도 + 항목별 위험도 */}
+          <div className="flex flex-col gap-4">
+            <Card className="flex flex-col items-center gap-3 py-8 text-center lg:py-9">
+              <h2 className="text-[13px] font-bold text-text-lightgray">종합 위험도</h2>
+              <RiskGauge score={result.overallScore} level={result.riskLevel} size={150} strokeWidth={12} />
+              <div
+                className={`inline-flex items-center gap-2 rounded-chip px-4 py-2 text-[14px] font-extrabold ${levelBadgeBg[result.riskLevel]} ${levelTextColor[result.riskLevel]}`}
+              >
+                <span className={`h-2 w-2 rounded-full ${levelBarColor[result.riskLevel]}`} />
+                {levelLabel[result.riskLevel]} 등급
               </div>
+              <p className="max-w-[380px] text-pretty text-[13px] leading-relaxed text-text-gray">{result.aiComment}</p>
             </Card>
 
-            {/* AI 핵심 요약 */}
-            <Card className="lg:flex-[55] lg:py-5">
-              <h2 className="text-sm font-bold text-text-dark lg:font-semibold lg:text-primary">AI 핵심 요약</h2>
-              <p className="mt-2 text-xs leading-relaxed text-text-dark lg:text-text-gray">{result.aiComment}</p>
+            <Card>
+              <h2 className="text-sm font-bold text-text-dark">항목별 위험도 분석</h2>
+              <div className="mt-3 flex flex-col gap-4">
+                {result.categories.map((category) => (
+                  <div key={category.name}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-text-dark">{category.name}</span>
+                      <span className={`font-bold ${levelTextColor[category.level]}`}>{category.score}점</span>
+                    </div>
+                    <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-border-input/40">
+                      <div
+                        className={`h-full rounded-full ${levelBarColor[category.level]}`}
+                        style={{ width: `${category.score}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-pretty text-[11px] leading-relaxed text-text-lightgray">{category.comment}</p>
+                  </div>
+                ))}
+              </div>
             </Card>
           </div>
 
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-4">
-            <div className="flex flex-col gap-4 lg:flex-[64]">
-              {/* 항목별 위험도 분석 */}
-              <Card className="lg:py-5">
-                <h2 className="text-sm font-bold text-text-dark lg:font-semibold lg:text-primary">항목별 위험도 분석</h2>
-                <div className="mt-3 flex flex-col gap-4">
-                  {result.categories.map((category) => (
-                    <div key={category.name}>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-text-dark">{category.name}</span>
-                        <span className={`font-bold ${levelTextColor[category.level]}`}>{category.score}점</span>
+          {/* 오른쪽: 발견된 조항 + AI 추천 조치 */}
+          <div className="flex flex-col gap-4">
+            {result.detectedClauses.length > 0 ? (
+              <Card>
+                <h2 className="text-sm font-bold text-text-dark">발견된 유의 조항</h2>
+                <ul className="mt-3 flex flex-col gap-2.5">
+                  {result.detectedClauses.map((clause, i) => (
+                    <li key={i} className={`rounded-2xl p-3.5 ${levelRowStyle[clause.level]}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-balance text-xs font-bold text-text-dark">{clause.summary}</p>
+                        <Chip tone={clause.level} className="shrink-0">
+                          {levelLabel[clause.level]}
+                        </Chip>
                       </div>
-                      <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-border-input/40">
-                        <div
-                          className={`h-full rounded-full ${levelBarColor[category.level]}`}
-                          style={{ width: `${category.score}%` }}
-                        />
-                      </div>
-                      <p className="mt-1 text-[11px] leading-relaxed text-text-lightgray">{category.comment}</p>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-
-              {/* 탐지된 조항 상세 */}
-              {result.detectedClauses.length > 0 ? (
-                <Card className="lg:py-5">
-                  <h2 className="text-sm font-bold text-text-dark lg:font-semibold lg:text-primary">탐지된 조항 상세</h2>
-                  <ul className="mt-3 flex flex-col divide-y divide-border">
-                    {result.detectedClauses.map((clause, i) => (
-                      <li key={i} className="py-3 first:pt-0 last:pb-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-xs font-medium text-text-dark">{clause.summary}</p>
-                          <Chip tone={clause.level} className="shrink-0">
-                            {levelLabel[clause.level]}
-                          </Chip>
-                        </div>
-                        <p className="mt-1 text-[11px] leading-relaxed text-text-lightgray">{clause.explanation}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </Card>
-              ) : (
-                <Card className="border-dashed text-center">
-                  <p className="text-xs leading-relaxed text-text-gray">
-                    첨부한 문서가 없어 조항별 분석은 생략됐어요.
-                    <br />
-                    등기부등본이나 계약서를 첨부하면 위험 조항을 구체적으로 짚어드려요.
-                  </p>
-                  <Link to="/home" className="mt-2 inline-block text-xs font-bold text-primary">
-                    문서 첨부하러 가기
-                  </Link>
-                </Card>
-              )}
-            </div>
-
-            {/* AI 추천 조치 */}
-            {result.recommendedActions.length > 0 && (
-              <Card className="mb-4 lg:mb-0 lg:flex-[36] lg:py-5">
-                <h2 className="text-sm font-bold text-text-dark lg:font-semibold lg:text-primary">AI 추천 조치</h2>
-                <ul className="mt-3 flex flex-col gap-3">
-                  {result.recommendedActions.map((action, i) => (
-                    <li key={i} className="flex items-start gap-2.5 text-xs text-text-dark lg:text-text-gray">
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-warning text-[11px] font-bold text-white">
-                        {i + 1}
-                      </span>
-                      <span className="leading-relaxed">{action}</span>
+                      <p className="mt-1 text-pretty text-[11px] leading-relaxed text-text-gray">{clause.explanation}</p>
                     </li>
                   ))}
                 </ul>
               </Card>
+            ) : (
+              <Card className="border-dashed text-center">
+                <p className="text-pretty text-xs leading-relaxed text-text-gray">
+                  첨부한 문서가 없어 조항별 분석은 생략됐어요.
+                  <br />
+                  등기부등본이나 계약서를 첨부하면 위험 조항을 구체적으로 짚어드려요.
+                </p>
+                <Link to="/home" className="mt-2 inline-block text-xs font-bold text-primary">
+                  문서 첨부하러 가기
+                </Link>
+              </Card>
+            )}
+
+            {result.recommendedActions.length > 0 && (
+              <div className="rounded-card bg-primary p-6 text-white lg:p-[26px]">
+                <h2 className="text-base font-extrabold">AI 추천 조치</h2>
+                <ul className="mt-4 flex flex-col gap-3.5">
+                  {result.recommendedActions.map((action, i) => (
+                    <li key={i} className="flex items-start gap-3 text-[13px] leading-relaxed">
+                      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/20 text-xs font-bold">
+                        {i + 1}
+                      </span>
+                      <span className="text-pretty opacity-95">{action}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  to="/psych-guard"
+                  className="mt-5 flex w-full items-center justify-center rounded-btn bg-white py-3.5 text-[14px] font-extrabold text-primary-dark"
+                >
+                  불안한 점, 상담으로 이어가기 →
+                </Link>
+              </div>
             )}
           </div>
         </div>

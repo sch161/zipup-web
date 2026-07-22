@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
+import type { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 
 interface TopNavProps {
@@ -6,56 +8,95 @@ interface TopNavProps {
 }
 
 const menuItems = [
-  { to: '/home', label: '홈' },
-  { to: '/psych-guard', label: '심리가드' },
-  { to: '/map', label: '안심맵' },
+  { to: '/home', label: '계약서 분석' },
+  { to: '/analysis', label: '위험 리포트' },
+  { to: '/map', label: '관심 지역' },
+  { to: '/psych-guard', label: '마음 상담' },
 ]
 
 export default function TopNav({ variant = 'app' }: TopNavProps) {
   const navigate = useNavigate()
+  const [user, setUser] = useState<User | null>(null)
 
-  async function handleLogout() {
-    await supabase.auth.signOut()
-    navigate('/login')
-  }
+  useEffect(() => {
+    if (variant !== 'app') return
+
+    supabase.auth.getUser().then(({ data }) => setUser(data.user))
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null))
+    return () => subscription.unsubscribe()
+  }, [variant])
+
+  const displayName = (user?.user_metadata?.name as string | undefined)?.trim() || user?.email?.split('@')[0] || '회원'
 
   return (
-    <header className="hidden h-[72px] w-full shrink-0 items-center border-b border-border bg-white lg:flex">
-      <div className="mx-auto flex w-full max-w-[960px] items-center justify-between px-8">
-        <Link to={variant === 'app' ? '/home' : '/'} className="flex items-center">
-          <img src="/illustrations/logo.svg" alt="ZIPUP" className="h-[22px]" />
+    <header className="sticky top-0 z-50 hidden w-full shrink-0 border-b border-border bg-white/80 backdrop-blur-md lg:block">
+      <div className="mx-auto flex w-full max-w-[1180px] items-center gap-7 px-8 py-[15px]">
+        <Link
+          to={variant === 'app' ? '/home' : '/'}
+          className="flex items-center text-[22px] font-extrabold tracking-tight"
+        >
+          <span className="text-primary">ZIP</span>
+          <span className="text-text-dark">UP</span>
         </Link>
 
         {variant === 'app' ? (
-          <nav className="flex items-center gap-7">
-            {menuItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  isActive ? 'text-base font-semibold text-primary' : 'text-sm font-medium text-text-lightgray'
-                }
+          <>
+            <nav className="flex flex-1 items-center gap-1">
+              {menuItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className="relative px-3.5 py-2 text-[15px] font-semibold text-text-gray whitespace-nowrap"
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className={isActive ? 'text-text-dark' : ''}>{item.label}</span>
+                      {isActive && (
+                        <span className="absolute inset-x-3.5 -bottom-[17px] h-[2px] rounded-full bg-primary" />
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </nav>
+
+            {user ? (
+              <Link
+                to="/profile"
+                className="flex items-center gap-2 rounded-chip border border-border bg-subtle py-[5px] pl-3.5 pr-1.5 text-sm font-semibold text-text-gray whitespace-nowrap"
               >
-                {item.label}
-              </NavLink>
-            ))}
-            <button type="button" onClick={handleLogout} className="text-sm font-medium text-text-lightgray">
-              로그아웃
-            </button>
-            <Link
-              to="/profile"
-              aria-label="프로필"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-primary-dark bg-white"
-            >
-              <img src="/illustrations/person.svg" alt="" className="h-[18px] w-[18px]" />
-            </Link>
-          </nav>
+                {displayName}
+                <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-primary text-[13px] font-bold text-white">
+                  {displayName.charAt(0).toUpperCase()}
+                </span>
+              </Link>
+            ) : (
+              <div className="flex flex-none items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate('/login')}
+                  className="px-3.5 py-[9px] text-sm font-bold text-text-gray"
+                >
+                  로그인
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/signup')}
+                  className="rounded-btn bg-primary px-[18px] py-2.5 text-sm font-bold text-white"
+                >
+                  회원가입
+                </button>
+              </div>
+            )}
+          </>
         ) : (
-          <div className="flex items-center gap-3">
-            <Link to="/login" className="text-sm font-bold text-primary">
+          <div className="flex flex-1 items-center justify-end gap-2">
+            <Link to="/login" className="px-3.5 py-[9px] text-sm font-bold text-text-gray">
               로그인
             </Link>
-            <Link to="/signup" className="rounded-btn bg-primary px-4 py-2 text-sm font-bold text-white shadow-btn">
+            <Link to="/signup" className="rounded-btn bg-primary px-[18px] py-2.5 text-sm font-bold text-white">
               회원가입
             </Link>
           </div>

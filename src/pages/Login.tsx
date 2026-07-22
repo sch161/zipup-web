@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import BrokenText from '../components/ui/BrokenText'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import TopNav from '../components/TopNav'
@@ -50,14 +51,32 @@ export default function Login() {
   return (
     <div className="flex min-h-screen flex-col bg-bg">
       <TopNav variant="auth" />
-      <div className="flex flex-1 items-center justify-center px-6 py-10">
+      <div className="mx-auto flex w-full max-w-[960px] flex-1 items-center gap-16 px-6 py-10 lg:grid lg:grid-cols-[1fr_440px]">
+        <div className="hidden lg:block">
+          <div className="mb-5 inline-flex items-center gap-[7px] rounded-chip bg-primary-bg px-3.5 py-[7px] text-[13px] font-bold text-primary-dark">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            상경 청년을 위한 안심 주거 파트너
+          </div>
+          <h1 className="text-balance text-[38px] font-extrabold leading-[1.2] tracking-tight text-text-dark">
+            다시 만나서
+            <br />
+            반가워요
+          </h1>
+          <p className="mt-4 max-w-[420px] text-[16.5px] leading-relaxed text-text-gray">
+            <BrokenText text="계약서 분석 기록과 관심 지역, 마음 상담 히스토리가 그대로 이어져요." />
+          </p>
+        </div>
+
         <div className="w-full max-w-app lg:max-w-[440px] lg:rounded-card lg:border lg:border-border lg:bg-card lg:p-10 lg:shadow-card">
-          <div className="flex flex-col items-center">
-            <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-[20px] bg-primary-bg text-3xl">
+          <div className="flex flex-col items-center lg:items-start">
+            <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-[20px] bg-primary-bg text-3xl lg:hidden">
               🏠
             </div>
-            <h1 className="text-[34px] font-bold text-primary">ZIPUP</h1>
-            <p className="mt-2 text-center text-sm text-text-gray">
+            <h2 className="text-[34px] font-bold text-primary lg:text-xl lg:font-extrabold lg:text-text-dark">
+              <span className="lg:hidden">ZIPUP</span>
+              <span className="hidden lg:inline">로그인</span>
+            </h2>
+            <p className="mt-2 text-balance text-center text-sm text-text-gray lg:hidden">
               AI로 전세사기 위험을 미리 확인하세요
             </p>
           </div>
@@ -97,25 +116,25 @@ export default function Login() {
             <span className="h-px flex-1 bg-border" />
           </div>
 
-          <div className="flex flex-col gap-3">
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => handleOAuthLogin('google')}
-              disabled={oauthLoading !== null}
-            >
-              <GoogleIcon />
-              {oauthLoading === 'google' ? '이동 중...' : 'Google로 계속하기'}
-            </Button>
-            <Button
-              variant="outline"
+          <div className="flex flex-col gap-2.5">
+            <button
               type="button"
               onClick={() => handleOAuthLogin('kakao')}
               disabled={oauthLoading !== null}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-btn bg-[#FEE500] text-sm font-bold text-[#3A2A00] transition-opacity active:opacity-80 disabled:opacity-50"
             >
               <KakaoIcon />
               {oauthLoading === 'kakao' ? '이동 중...' : '카카오로 계속하기'}
-            </Button>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOAuthLogin('google')}
+              disabled={oauthLoading !== null}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-btn border border-border-input bg-white text-sm font-bold text-text-dark transition-opacity active:opacity-80 disabled:opacity-50"
+            >
+              <GoogleIcon />
+              {oauthLoading === 'google' ? '이동 중...' : 'Google로 계속하기'}
+            </button>
           </div>
 
           <p className="mt-8 text-center text-sm text-text-gray">

@@ -8,11 +8,11 @@ interface NavItem {
 }
 
 const iconProps = (active: boolean) => ({
-  width: 22,
-  height: 22,
+  width: 21,
+  height: 21,
   viewBox: '0 0 24 24',
   fill: 'none',
-  stroke: active ? '#FF6B35' : '#C9BEB6',
+  stroke: active ? '#FF5A1F' : '#B4B1AB',
   strokeWidth: 2,
   strokeLinecap: 'round' as const,
   strokeLinejoin: 'round' as const,
@@ -21,7 +21,7 @@ const iconProps = (active: boolean) => ({
 const items: NavItem[] = [
   {
     to: '/home',
-    label: '홈',
+    label: '분석',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <path d="M3 11.5 12 4l9 7.5" />
@@ -30,20 +30,30 @@ const items: NavItem[] = [
     ),
   },
   {
-    to: '/psych-guard',
-    label: '심리가드',
+    to: '/analysis',
+    label: '리포트',
     icon: (active) => (
       <svg {...iconProps(active)}>
-        <path d="M12 3 4 6v6c0 4.5 3.4 7.7 8 9 4.6-1.3 8-4.5 8-9V6l-8-3Z" />
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 7v5l3.2 1.9" />
       </svg>
     ),
   },
   {
     to: '/map',
-    label: '지도',
+    label: '지역',
     icon: (active) => (
       <svg {...iconProps(active)}>
         <path d="M9 20 3 17V5l6 3m0 12 6-3m-6 3V8m6 9 6 3V8l-6-3m0 12V5m0 3-6-3" />
+      </svg>
+    ),
+  },
+  {
+    to: '/psych-guard',
+    label: '상담',
+    icon: (active) => (
+      <svg {...iconProps(active)}>
+        <path d="M12 3 4 6v6c0 4.5 3.4 7.7 8 9 4.6-1.3 8-4.5 8-9V6l-8-3Z" />
       </svg>
     ),
   },
@@ -61,7 +71,7 @@ const items: NavItem[] = [
 
 export default function BottomNav() {
   return (
-    <nav className="sticky bottom-0 z-10 flex h-[66px] w-full items-stretch border-t border-border bg-white lg:hidden">
+    <nav className="sticky bottom-0 z-10 flex h-[64px] w-full items-stretch border-t border-border bg-white/95 backdrop-blur-md lg:hidden">
       {items.map((item) => (
         <NavLink
           key={item.to}
@@ -72,7 +82,7 @@ export default function BottomNav() {
           {({ isActive }) => (
             <>
               {item.icon(isActive)}
-              <span className={`text-[10px] font-medium ${isActive ? 'text-primary' : 'text-text-lightgray'}`}>
+              <span className={`text-[10px] font-semibold ${isActive ? 'text-primary' : 'text-text-lightgray'}`}>
                 {item.label}
               </span>
             </>

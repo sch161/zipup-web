@@ -7,6 +7,14 @@ declare namespace kakao.maps {
 
   class Map {
     constructor(container: HTMLElement, options: { center: LatLng; level: number })
+    setBounds(bounds: LatLngBounds, padding?: number): void
+    setCenter(latlng: LatLng): void
+    setLevel(level: number): void
+  }
+
+  class LatLngBounds {
+    constructor()
+    extend(latlng: LatLng): void
   }
 
   interface PolygonOptions {

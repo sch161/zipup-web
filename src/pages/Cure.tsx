@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import BrokenText from "../components/ui/BrokenText";
 import Card from "../components/ui/Card";
 import Chip from "../components/ui/Chip";
 import RiskGauge from "../components/ui/RiskGauge";
@@ -14,6 +15,7 @@ import {
   type ChatAnalysisResult,
   type ChatRiskLevel,
 } from "../lib/analyzeChat";
+import { useSessionState } from "../lib/useSessionState";
 
 type GaugeLevel = "danger" | "warning" | "success";
 
@@ -40,10 +42,10 @@ interface ChatMessage {
 function AttachIcon({ className }: { className?: string }) {
   return (
     <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-      <rect width="64" height="64" rx="32" fill="#E0926B" />
+      <rect width="64" height="64" rx="32" fill="#FF5A1F" />
       <path
         d="M44 32H32M32 32H20M32 32V20M32 32V44"
-        stroke="#FFF5F4"
+        stroke="#FFFFFF"
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -57,7 +59,7 @@ function SendIcon({ className }: { className?: string }) {
     <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 42 42" fill="none">
       <path
         d="M17.5 24.5L36.75 5.25M36.75 5.25L5.25 16.625C5.08245 16.7018 4.94047 16.8251 4.84093 16.9802C4.74139 17.1353 4.68848 17.3157 4.68848 17.5C4.68848 17.6843 4.74139 17.8647 4.84093 18.0198C4.94047 18.175 5.08245 18.2982 5.25 18.375L17.5 24.5L23.625 36.75C23.7018 36.9175 23.8251 37.0595 23.9802 37.1591C24.1353 37.2586 24.3157 37.3115 24.5 37.3115C24.6843 37.3115 24.8647 37.2586 25.0198 37.1591C25.175 37.0595 25.2982 36.9175 25.375 36.75L36.75 5.25Z"
-        stroke="#E0926B"
+        stroke="#FF5A1F"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -94,7 +96,7 @@ function SuggestedResponseCard({ text }: { text: string }) {
         </button>
       </div>
       <p className="mt-2 text-xs leading-relaxed text-text-dark lg:text-text-gray">
-        {text}
+        <BrokenText text={text} />
       </p>
     </Card>
   );
@@ -106,7 +108,7 @@ function AnalysisPanel({ analysis }: { analysis: ChatAnalysisResult }) {
   return (
     <div className="flex w-full max-w-[85%] flex-col gap-3 self-start lg:max-w-[70%]">
       {analysis.isWarning && (
-        <div className="flex items-center gap-1.5 rounded-input bg-danger-bg px-3 py-2 text-[11px] font-bold text-danger lg:rounded-2xl lg:rounded-tl-[4px] lg:border lg:border-border-input lg:bg-bg lg:font-medium lg:text-primary">
+        <div className="flex items-center gap-1.5 text-pretty rounded-input bg-danger-bg px-3 py-2 text-[11px] font-bold text-danger lg:rounded-2xl lg:rounded-tl-[4px] lg:border lg:border-border-input lg:bg-bg lg:font-medium lg:text-primary">
           ⚠️ 조작 정황이 의심되는 메시지예요. 아래 내용을 꼭 확인하세요.
         </div>
       )}
@@ -140,7 +142,7 @@ function AnalysisPanel({ analysis }: { analysis: ChatAnalysisResult }) {
 }
 
 export default function Cure() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useSessionState<ChatMessage[]>("zipup:psychGuardMessages", []);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -210,18 +212,18 @@ export default function Cure() {
   }
 
   return (
-    <div className="flex flex-col gap-4 px-5 pt-6 lg:gap-6 lg:px-0 lg:pt-0">
+    <div className="flex w-full flex-col gap-4 px-5 pt-6 pb-4 lg:mx-auto lg:max-w-[900px] lg:gap-6 lg:px-6 lg:py-10">
       <header className="lg:hidden">
-        <h1 className="text-lg font-bold text-primary">심리 가드</h1>
-        <p className="mt-1 text-xs text-text-gray">
+        <h1 className="text-lg font-bold text-primary">마음 상담</h1>
+        <p className="mt-1 text-pretty text-xs text-text-gray">
           중개인/집주인에게 받은 문자를 붙여넣거나 카카오톡 캡처 이미지를
           첨부하면 AI가 가스라이팅 패턴을 분석해드려요!
         </p>
       </header>
 
       <div className="hidden lg:block">
-        <h1 className="text-2xl font-bold text-text-dark">심리 가드</h1>
-        <p className="mt-1 text-sm text-text-gray">
+        <h1 className="text-2xl font-bold text-text-dark">마음 상담</h1>
+        <p className="mt-1 text-pretty text-sm text-text-gray">
           중개인/집주인에게 받은 문자를 붙여넣거나 카카오톡 캡처 이미지를
           첨부하면 AI가 가스라이팅 패턴을 분석해드려요!
         </p>
@@ -234,7 +236,7 @@ export default function Cure() {
         >
           {messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
-              <p className="text-xs leading-relaxed text-text-gray">
+              <p className="text-pretty text-xs leading-relaxed text-text-gray">
                 아직 분석한 메시지가 없어요.
                 <br />
                 받은 문자 내용을 붙여넣거나 캡처 이미지를 첨부해서 전송해보세요.
@@ -257,7 +259,7 @@ export default function Cure() {
                 )}
                 {msg.text && (
                   <div className="whitespace-pre-wrap rounded-2xl bg-primary px-4 py-2.5 text-xs leading-relaxed text-white lg:rounded-tr-[4px]">
-                    {msg.text}
+                    <BrokenText text={msg.text} />
                   </div>
                 )}
               </div>
@@ -268,7 +270,7 @@ export default function Cure() {
                     🤖
                   </span>
                   <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl border border-border bg-white px-4 py-2.5 text-xs leading-relaxed text-text-dark lg:max-w-[70%] lg:rounded-tl-[4px] lg:border-border-input lg:text-text-gray">
-                    {msg.text}
+                    <BrokenText text={msg.text} />
                   </div>
                 </div>
                 {msg.analysis && <AnalysisPanel analysis={msg.analysis} />}

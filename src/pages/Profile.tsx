@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { User } from '@supabase/supabase-js'
+import BrokenText from '../components/ui/BrokenText'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Chip from '../components/ui/Chip'
@@ -46,7 +47,7 @@ function DeleteAccountModal({
       <Card className="w-full max-w-[360px]">
         <h2 className="text-sm font-bold text-text-dark">정말 탈퇴하시겠어요?</h2>
         <p className="mt-2 text-xs leading-relaxed text-text-gray">
-          탈퇴하면 계정 정보와 계약서 스캔·심리 가드 분석 기록이 모두 삭제되며 복구할 수 없어요.
+          <BrokenText text="탈퇴하면 계정 정보와 계약서 스캔·마음 상담 분석 기록이 모두 삭제되며 복구할 수 없어요." />
         </p>
         {error && <p className="mt-2 text-xs font-medium text-danger">{error}</p>}
         <div className="mt-4 flex gap-2">
@@ -147,7 +148,7 @@ export default function Profile() {
   const avatarUrl = user.user_metadata?.avatar_url as string | undefined
 
   return (
-    <div className="flex flex-col gap-4 px-5 pt-6 lg:gap-6 lg:px-0 lg:pt-0">
+    <div className="flex w-full flex-col gap-4 px-5 pt-6 pb-4 lg:mx-auto lg:max-w-[820px] lg:gap-6 lg:px-6 lg:py-10">
       <header className="lg:hidden">
         <h1 className="text-lg font-bold text-primary">👤 프로필</h1>
       </header>
@@ -194,7 +195,7 @@ export default function Profile() {
               tab === 'gaslighting' ? 'border-b-2 border-primary text-primary' : 'text-text-lightgray'
             }`}
           >
-            심리 가드
+            마음 상담
           </button>
         </div>
 
@@ -252,9 +253,9 @@ export default function Profile() {
           {!historyLoading && !historyError && tab === 'gaslighting' && (
             gaslighting.length === 0 ? (
               <div className="flex flex-col items-center gap-1 py-8 text-center">
-                <p className="text-xs text-text-gray">아직 심리 가드 분석 기록이 없어요.</p>
+                <p className="text-xs text-text-gray">아직 마음 상담 분석 기록이 없어요.</p>
                 <Link to="/psych-guard" className="mt-1 text-xs font-bold text-primary">
-                  심리 가드로 가기
+                  마음 상담으로 가기
                 </Link>
               </div>
             ) : (
@@ -308,7 +309,7 @@ export default function Profile() {
           />
           <Toggle
             label="분석 완료 알림"
-            description="계약서 스캔·심리 가드 분석이 끝나면 알려드려요"
+            description="계약서 스캔·마음 상담 분석이 끝나면 알려드려요"
             checked={analysisAlerts}
             onChange={setAnalysisAlerts}
           />
@@ -319,7 +320,9 @@ export default function Profile() {
             onChange={setMarketingAlerts}
           />
         </div>
-        <p className="mt-2 text-[10px] text-text-lightgray">알림 발송 기능은 준비 중이에요. 설정은 저장되지 않아요.</p>
+        <p className="mt-2 text-[10px] text-text-lightgray">
+          <BrokenText text="알림 발송 기능은 준비 중이에요. 설정은 저장되지 않아요." />
+        </p>
       </Card>
 
       {/* 정책 / 고객센터 */}

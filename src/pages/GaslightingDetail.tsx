@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import BrokenText from '../components/ui/BrokenText'
 import Card from '../components/ui/Card'
 import Chip from '../components/ui/Chip'
 import RiskGauge from '../components/ui/RiskGauge'
@@ -90,7 +91,7 @@ export default function GaslightingDetail() {
       <div className="mx-auto w-full max-w-app flex-1 px-5 py-6 lg:max-w-[720px] lg:px-6 lg:py-10">
         <div className="flex items-center gap-3">
           <BackButton onClick={() => navigate(-1)} />
-          <h1 className="text-lg font-bold text-primary lg:text-2xl">심리 가드 분석 결과</h1>
+          <h1 className="text-lg font-bold text-primary lg:text-2xl">마음 상담 분석 결과</h1>
         </div>
 
         {loading && <p className="mt-8 text-center text-sm text-text-gray">불러오는 중...</p>}
@@ -118,7 +119,9 @@ export default function GaslightingDetail() {
 
             <Card>
               <h2 className="text-sm font-bold text-text-dark">받은 메시지</h2>
-              <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-text-dark">{item.input_text}</p>
+              <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-text-dark">
+                <BrokenText text={item.input_text} />
+              </p>
             </Card>
 
             <Card>
@@ -138,7 +141,9 @@ export default function GaslightingDetail() {
                   <h2 className="flex items-center gap-1.5 text-xs font-bold text-text-dark">💬 AI 추천 대응 멘트</h2>
                   <CopyButton text={item.suggested_response} />
                 </div>
-                <p className="mt-2 text-xs leading-relaxed text-text-dark">{item.suggested_response}</p>
+                <p className="mt-2 text-xs leading-relaxed text-text-dark">
+                  <BrokenText text={item.suggested_response} />
+                </p>
               </Card>
             )}
           </div>
