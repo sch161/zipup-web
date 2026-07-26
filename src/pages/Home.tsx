@@ -1,4 +1,10 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useEffect,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import AnalyzingOverlay from "../components/ui/AnalyzingOverlay";
 import BrokenText from "../components/ui/BrokenText";
@@ -51,6 +57,7 @@ const FEATURES = [
 export default function Home() {
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [address, setAddress] = useState("");
   const [deposit, setDeposit] = useState("");
   const [buildingType, setBuildingType] = useState("");
@@ -74,6 +81,23 @@ export default function Home() {
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     setFile(e.target.files?.[0] ?? null);
+  }
+
+  function handleDragOver(e: DragEvent<HTMLLabelElement>) {
+    e.preventDefault();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLLabelElement>) {
+    e.preventDefault();
+    setIsDragging(false);
+  }
+
+  function handleDrop(e: DragEvent<HTMLLabelElement>) {
+    e.preventDefault();
+    setIsDragging(false);
+    const dropped = e.dataTransfer.files?.[0];
+    if (dropped) setFile(dropped);
   }
 
   async function handleAnalyze(e: FormEvent) {
@@ -155,13 +179,25 @@ export default function Home() {
 
           <label
             htmlFor="scan-upload"
-            className="flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-[1.5px] border-dashed border-primary/40 bg-primary-bg/30 text-center"
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-[1.5px] border-dashed text-center transition-colors ${
+              isDragging
+                ? "border-primary bg-primary-bg/60"
+                : "border-primary/40 bg-primary-bg/30"
+            }`}
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-bg text-lg font-bold text-primary">
               ↑
             </span>
             <span className="text-[13px] font-bold text-text-dark">
-              {file ? `✓ ${file.name}` : "계약서 파일을 끌어다 놓으세요"}
+              {file
+                ? `✓ ${file.name}`
+                : isDragging
+                  ? "여기에 파일을 놓으세요"
+                  : "계약서 파일을 끌어다 놓으세요"}
             </span>
             <input
               id="scan-upload"
