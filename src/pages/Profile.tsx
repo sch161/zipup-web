@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { User } from "@supabase/supabase-js";
+import BatchJobStatusCard from "../components/ui/BatchJobStatusCard";
 import BrokenText from "../components/ui/BrokenText";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
@@ -408,6 +409,9 @@ export default function Profile() {
           <BrokenText text="알림 발송 기능은 준비 중이에요. 설정은 저장되지 않아요." />
         </p>
       </Card>
+
+      {/* 배치 작업 상태 */}
+      <BatchJobStatusCard />
 
       {/* 정책 / 고객센터 */}
       <Card className="p-0">

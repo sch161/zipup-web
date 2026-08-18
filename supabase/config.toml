@@ -406,6 +406,14 @@ verify_jwt = false
 # Same reasoning as fetch-market-data above.
 verify_jwt = false
 
+[functions.sync-news]
+# Same reasoning as fetch-market-data above — this is also cron-only. Previously had
+# no override here (defaulted to verify_jwt = true) while its cron job sent no auth
+# header at all, so every invocation since 2026-07-20 was silently rejected with 401
+# before the function body ever ran. Now enforced via `x-cron-secret` like the other
+# two batch functions (see _shared/cronAuth.ts and the 20260818 migration).
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

@@ -11,9 +11,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { requireCronSecret } from '../_shared/cronAuth.ts'
+import { recordJobRun } from '../_shared/jobStatus.ts'
 import { ALL_REGIONS } from '../_shared/regions.ts'
 import { takeNextBatch } from '../_shared/regionBatch.ts'
 import { recalculateAllRiskScores } from '../_shared/riskScore.ts'
+
+const JOB_NAME = 'fetch-region-buzz'
 
 const NAVER_CLIENT_ID = Deno.env.get('NAVER_CLIENT_ID')
 const NAVER_CLIENT_SECRET = Deno.env.get('NAVER_CLIENT_SECRET')
@@ -45,44 +48,53 @@ Deno.serve(async (req: Request) => {
   const authError = requireCronSecret(req)
   if (authError) return authError
 
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
   if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) {
     console.error('NAVER_CLIENT_ID / NAVER_CLIENT_SECRET is not set in Supabase Secrets')
+    await recordJobRun(supabase, JOB_NAME, { success: false, error: 'Naver API 설정이 되어있지 않습니다.' })
     return jsonResponse({ error: 'Naver API 설정이 되어있지 않습니다.' }, 500)
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  try {
+    const { regions, batchStartIndex, totalRegions } = await takeNextBatch(supabase, 'fetch-region-buzz', ALL_REGIONS)
 
-  const { regions, batchStartIndex, totalRegions } = await takeNextBatch(supabase, 'fetch-region-buzz', ALL_REGIONS)
+    let updated = 0
+    let failed = 0
 
-  let updated = 0
-  let failed = 0
+    for (const region of regions) {
+      try {
+        const newsMentions = await fetchMentionTotal(region.name)
 
-  for (const region of regions) {
-    try {
-      const newsMentions = await fetchMentionTotal(region.name)
+        const { error } = await supabase.from('region_stats').upsert(
+          {
+            region_code: region.code,
+            region_name: region.name,
+            news_mentions: newsMentions,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'region_code' },
+        )
 
-      const { error } = await supabase.from('region_stats').upsert(
-        {
-          region_code: region.code,
-          region_name: region.name,
-          news_mentions: newsMentions,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'region_code' },
-      )
+        if (error) throw error
+        updated++
+      } catch (err) {
+        console.error(`fetch-region-buzz: failed for ${region.name} (${region.code})`, err)
+        failed++
+      }
 
-      if (error) throw error
-      updated++
-    } catch (err) {
-      console.error(`fetch-region-buzz: failed for ${region.name} (${region.code})`, err)
-      failed++
+      // Naver API 호출량 제한을 배려한 짧은 텀
+      await new Promise((resolve) => setTimeout(resolve, 150))
     }
 
-    // Naver API 호출량 제한을 배려한 짧은 텀
-    await new Promise((resolve) => setTimeout(resolve, 150))
+    await recalculateAllRiskScores(supabase)
+
+    const summary = { batchStartIndex, batchSize: regions.length, totalRegions, updated, failed }
+    await recordJobRun(supabase, JOB_NAME, { success: true, result: summary })
+    return jsonResponse(summary)
+  } catch (err) {
+    console.error('fetch-region-buzz: batch failed', err)
+    await recordJobRun(supabase, JOB_NAME, { success: false, error: err instanceof Error ? err.message : String(err) })
+    return jsonResponse({ error: '지역 뉴스 언급 데이터 갱신 중 오류가 발생했습니다.' }, 500)
   }
-
-  await recalculateAllRiskScores(supabase)
-
-  return jsonResponse({ batchStartIndex, batchSize: regions.length, totalRegions, updated, failed })
 })

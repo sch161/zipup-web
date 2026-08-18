@@ -4,6 +4,10 @@
 // cron schedule or invoked manually — not called from the frontend.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireCronSecret } from '../_shared/cronAuth.ts'
+import { recordJobRun } from '../_shared/jobStatus.ts'
+
+const JOB_NAME = 'sync-news'
 
 const NAVER_CLIENT_ID = Deno.env.get('NAVER_CLIENT_ID')
 const NAVER_CLIENT_SECRET = Deno.env.get('NAVER_CLIENT_SECRET')
@@ -58,8 +62,14 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  const authError = requireCronSecret(req)
+  if (authError) return authError
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
   if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) {
     console.error('NAVER_CLIENT_ID / NAVER_CLIENT_SECRET is not set in Supabase Secrets')
+    await recordJobRun(supabase, JOB_NAME, { success: false, error: 'Naver API 설정이 되어있지 않습니다.' })
     return jsonResponse({ error: 'Naver API 설정이 되어있지 않습니다.' }, 500)
   }
 
@@ -78,6 +88,7 @@ Deno.serve(async (req: Request) => {
     if (!naverRes.ok) {
       const errText = await naverRes.text()
       console.error('Naver API error', naverRes.status, errText)
+      await recordJobRun(supabase, JOB_NAME, { success: false, error: `Naver API HTTP ${naverRes.status}` })
       return jsonResponse({ error: 'Naver 뉴스 검색에 실패했습니다.' }, 502)
     }
 
@@ -94,17 +105,19 @@ Deno.serve(async (req: Request) => {
       }
     })
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     const { error } = await supabase.from('news').upsert(rows, { onConflict: 'url' })
 
     if (error) {
       console.error('news upsert error', error)
+      await recordJobRun(supabase, JOB_NAME, { success: false, error: error.message })
       return jsonResponse({ error: '뉴스 저장에 실패했습니다.' }, 500)
     }
 
+    await recordJobRun(supabase, JOB_NAME, { success: true, result: { synced: rows.length } })
     return jsonResponse({ synced: rows.length })
   } catch (err) {
     console.error('sync-news error', err)
+    await recordJobRun(supabase, JOB_NAME, { success: false, error: err instanceof Error ? err.message : String(err) })
     return jsonResponse({ error: '뉴스 동기화 중 오류가 발생했습니다.' }, 500)
   }
 })

@@ -20,6 +20,7 @@ dotenv.config({ path: ".env.local" });
 const BASE_URL = "https://www.khug.or.kr/jeonse/web/s01/s010321.jsp";
 const REQUEST_DELAY_MS = 400; // 정부 사이트 예의상 딜레이. 절대 줄이지 말 것.
 const MAX_RETRIES = 3;
+const JOB_NAME = "sync-hug-defaulters";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -28,6 +29,35 @@ const supabase = createClient(
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Edge Function들의 _shared/jobStatus.ts와 같은 역할 — GitHub Actions로 도는 이 스크립트도
+// 같은 batch_job_status 테이블에 자신의 실행 결과를 남겨, 마이페이지 상태판에서 다른 배치
+// 작업들과 동일하게 "마지막 갱신: N일 전"으로 보이게 한다.
+async function recordJobRun(outcome) {
+  const now = new Date().toISOString();
+  const patch = outcome.success
+    ? {
+        job_name: JOB_NAME,
+        last_run_at: now,
+        last_success_at: now,
+        last_error: null,
+        last_result: outcome.result ?? null,
+        updated_at: now,
+      }
+    : {
+        job_name: JOB_NAME,
+        last_run_at: now,
+        last_error: String(outcome.error).slice(0, 500),
+        updated_at: now,
+      };
+
+  const { error } = await supabase
+    .from("batch_job_status")
+    .upsert(patch, { onConflict: "job_name" });
+  if (error) {
+    console.error("[sync-hug-defaulters] batch_job_status 기록 실패", error);
+  }
 }
 
 async function fetchPage(pageNum) {
@@ -157,6 +187,7 @@ async function main() {
 
   // 500건씩 배치 upsert (한 번에 너무 큰 요청 방지)
   const BATCH = 500;
+  let firstUpsertError = null;
   for (let i = 0; i < payload.length; i += BATCH) {
     const chunk = payload.slice(i, i + BATCH);
     const { error } = await supabase
@@ -164,14 +195,28 @@ async function main() {
       .upsert(chunk, { onConflict: "raw_row_hash" });
     if (error) {
       console.error("[sync-hug-defaulters] upsert 오류", error);
+      firstUpsertError ??= error;
       process.exitCode = 1;
     }
+  }
+
+  if (firstUpsertError) {
+    await recordJobRun({
+      success: false,
+      error: `hug_defaulters upsert 실패: ${firstUpsertError.message}`,
+    });
+  } else {
+    await recordJobRun({
+      success: true,
+      result: { totalPages, totalRows: allRows.length },
+    });
   }
 
   console.log("[sync-hug-defaulters] 완료");
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("[sync-hug-defaulters] 실패", err);
+  await recordJobRun({ success: false, error: err.message ?? String(err) });
   process.exitCode = 1;
 });

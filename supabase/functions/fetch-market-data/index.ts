@@ -16,9 +16,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { requireCronSecret } from '../_shared/cronAuth.ts'
+import { recordJobRun } from '../_shared/jobStatus.ts'
 import { ALL_REGIONS } from '../_shared/regions.ts'
 import { takeNextBatch } from '../_shared/regionBatch.ts'
 import { recalculateAllRiskScores } from '../_shared/riskScore.ts'
+
+const JOB_NAME = 'fetch-market-data'
 
 const MOLIT_API_KEY = Deno.env.get('MOLIT_API_KEY')
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -121,104 +124,114 @@ Deno.serve(async (req: Request) => {
   const authError = requireCronSecret(req)
   if (authError) return authError
 
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
   if (!MOLIT_API_KEY) {
     console.error('MOLIT_API_KEY is not set in Supabase Secrets')
+    await recordJobRun(supabase, JOB_NAME, { success: false, error: '국토교통부 API 키가 설정되지 않았습니다.' })
     return jsonResponse({ error: '국토교통부 API 키가 설정되지 않았습니다.' }, 500)
   }
 
   const dealYmd = previousMonthYYYYMM()
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-  const { regions, batchStartIndex, totalRegions } = await takeNextBatch(supabase, 'fetch-market-data', ALL_REGIONS)
+  try {
+    const { regions, batchStartIndex, totalRegions } = await takeNextBatch(supabase, 'fetch-market-data', ALL_REGIONS)
 
-  const EMPTY_SUMMARY: MarketSummary = { avgSalePrice: null, avgJeonsePrice: null, jeonseRatio: null }
+    const EMPTY_SUMMARY: MarketSummary = { avgSalePrice: null, avgJeonsePrice: null, jeonseRatio: null }
 
-  let updated = 0
-  let failed = 0
-  let villaFailed = 0
-  const sampleErrors: { region: string; message: string }[] = []
-  const villaSampleErrors: { region: string; message: string }[] = []
+    let updated = 0
+    let failed = 0
+    let villaFailed = 0
+    const sampleErrors: { region: string; message: string }[] = []
+    const villaSampleErrors: { region: string; message: string }[] = []
 
-  for (const region of regions) {
-    // 아파트/빌라 호출을 allSettled로 동시에 날리되 결과는 따로 처리한다 — 두 그룹을 하나의
-    // Promise.all/try-catch로 묶으면 (a) 한쪽이 실패할 때(예: 빌라 API가 아직 data.go.kr에서
-    // 활용신청이 안 됐을 때) 이미 잘 동작하던 아파트 데이터 수집까지 막히고, (b) 순차로 나눠
-    // 호출하면 지역당 처리 시간이 배로 늘어 배치 시간 예산을 넘길 수 있다.
-    const [villaResult, aptResult] = await Promise.allSettled([
-      Promise.all([fetchItems(VILLA_TRADE_ENDPOINT, region.code, dealYmd), fetchItems(VILLA_RENT_ENDPOINT, region.code, dealYmd)]),
-      Promise.all([fetchItems(APT_TRADE_ENDPOINT, region.code, dealYmd), fetchItems(APT_RENT_ENDPOINT, region.code, dealYmd)]),
-    ])
+    for (const region of regions) {
+      // 아파트/빌라 호출을 allSettled로 동시에 날리되 결과는 따로 처리한다 — 두 그룹을 하나의
+      // Promise.all/try-catch로 묶으면 (a) 한쪽이 실패할 때(예: 빌라 API가 아직 data.go.kr에서
+      // 활용신청이 안 됐을 때) 이미 잘 동작하던 아파트 데이터 수집까지 막히고, (b) 순차로 나눠
+      // 호출하면 지역당 처리 시간이 배로 늘어 배치 시간 예산을 넘길 수 있다.
+      const [villaResult, aptResult] = await Promise.allSettled([
+        Promise.all([fetchItems(VILLA_TRADE_ENDPOINT, region.code, dealYmd), fetchItems(VILLA_RENT_ENDPOINT, region.code, dealYmd)]),
+        Promise.all([fetchItems(APT_TRADE_ENDPOINT, region.code, dealYmd), fetchItems(APT_RENT_ENDPOINT, region.code, dealYmd)]),
+      ])
 
-    let villa = EMPTY_SUMMARY
-    if (villaResult.status === 'fulfilled') {
-      villa = summarizeMarket(villaResult.value[0], villaResult.value[1])
-    } else {
-      console.error(`fetch-market-data: villa fetch failed for ${region.name} (${region.code})`, villaResult.reason)
-      if (villaSampleErrors.length < 3) {
-        villaSampleErrors.push({
-          region: region.name,
-          message: villaResult.reason instanceof Error ? villaResult.reason.message : String(villaResult.reason),
-        })
+      let villa = EMPTY_SUMMARY
+      if (villaResult.status === 'fulfilled') {
+        villa = summarizeMarket(villaResult.value[0], villaResult.value[1])
+      } else {
+        console.error(`fetch-market-data: villa fetch failed for ${region.name} (${region.code})`, villaResult.reason)
+        if (villaSampleErrors.length < 3) {
+          villaSampleErrors.push({
+            region: region.name,
+            message: villaResult.reason instanceof Error ? villaResult.reason.message : String(villaResult.reason),
+          })
+        }
+        villaFailed++
       }
-      villaFailed++
-    }
 
-    if (aptResult.status === 'fulfilled') {
-      try {
-        const apt = summarizeMarket(aptResult.value[0], aptResult.value[1])
+      if (aptResult.status === 'fulfilled') {
+        try {
+          const apt = summarizeMarket(aptResult.value[0], aptResult.value[1])
 
-        const { error } = await supabase
-          .from('region_stats')
-          .upsert(
-            {
-              region_code: region.code,
-              region_name: region.name,
-              avg_sale_price: apt.avgSalePrice,
-              avg_jeonse_price: apt.avgJeonsePrice,
-              jeonse_ratio: apt.jeonseRatio,
-              villa_avg_sale_price: villa.avgSalePrice,
-              villa_avg_jeonse_price: villa.avgJeonsePrice,
-              villa_jeonse_ratio: villa.jeonseRatio,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'region_code' },
-          )
+          const { error } = await supabase
+            .from('region_stats')
+            .upsert(
+              {
+                region_code: region.code,
+                region_name: region.name,
+                avg_sale_price: apt.avgSalePrice,
+                avg_jeonse_price: apt.avgJeonsePrice,
+                jeonse_ratio: apt.jeonseRatio,
+                villa_avg_sale_price: villa.avgSalePrice,
+                villa_avg_jeonse_price: villa.avgJeonsePrice,
+                villa_jeonse_ratio: villa.jeonseRatio,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'region_code' },
+            )
 
-        if (error) throw error
-        updated++
-      } catch (err) {
-        console.error(`fetch-market-data: failed for ${region.name} (${region.code})`, err)
+          if (error) throw error
+          updated++
+        } catch (err) {
+          console.error(`fetch-market-data: failed for ${region.name} (${region.code})`, err)
+          if (sampleErrors.length < 3) {
+            sampleErrors.push({ region: region.name, message: err instanceof Error ? err.message : String(err) })
+          }
+          failed++
+        }
+      } else {
+        console.error(`fetch-market-data: apt fetch failed for ${region.name} (${region.code})`, aptResult.reason)
         if (sampleErrors.length < 3) {
-          sampleErrors.push({ region: region.name, message: err instanceof Error ? err.message : String(err) })
+          sampleErrors.push({
+            region: region.name,
+            message: aptResult.reason instanceof Error ? aptResult.reason.message : String(aptResult.reason),
+          })
         }
         failed++
       }
-    } else {
-      console.error(`fetch-market-data: apt fetch failed for ${region.name} (${region.code})`, aptResult.reason)
-      if (sampleErrors.length < 3) {
-        sampleErrors.push({
-          region: region.name,
-          message: aptResult.reason instanceof Error ? aptResult.reason.message : String(aptResult.reason),
-        })
-      }
-      failed++
+
+      // 공공데이터포털 호출량 제한을 배려한 짧은 텀
+      await new Promise((resolve) => setTimeout(resolve, 200))
     }
 
-    // 공공데이터포털 호출량 제한을 배려한 짧은 텀
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    await recalculateAllRiskScores(supabase)
+
+    const summary = {
+      month: dealYmd,
+      batchStartIndex,
+      batchSize: regions.length,
+      totalRegions,
+      updated,
+      failed,
+      sampleErrors,
+      villaFailed,
+      villaSampleErrors,
+    }
+    await recordJobRun(supabase, JOB_NAME, { success: true, result: summary })
+    return jsonResponse(summary)
+  } catch (err) {
+    console.error('fetch-market-data: batch failed', err)
+    await recordJobRun(supabase, JOB_NAME, { success: false, error: err instanceof Error ? err.message : String(err) })
+    return jsonResponse({ error: '지역 시세 데이터 갱신 중 오류가 발생했습니다.' }, 500)
   }
-
-  await recalculateAllRiskScores(supabase)
-
-  return jsonResponse({
-    month: dealYmd,
-    batchStartIndex,
-    batchSize: regions.length,
-    totalRegions,
-    updated,
-    failed,
-    sampleErrors,
-    villaFailed,
-    villaSampleErrors,
-  })
 })
