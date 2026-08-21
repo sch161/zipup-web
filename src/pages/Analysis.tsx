@@ -115,7 +115,12 @@ export default function Analysis() {
             <BrokenText text="이 분석은 예전 채점 기준으로 계산된 결과예요. 지금과 달리 그때는 점수가 낮을수록 위험하다는 뜻이었어요." />
           </p>
         ) : (
-          <p className="mt-2 text-[11px] text-text-lightgray">점수가 높을수록 위험합니다.</p>
+          <p className="mt-2 text-[11px] text-text-lightgray">
+            점수가 높을수록 위험합니다.{' '}
+            <Link to="/scoring" className="font-bold text-primary underline underline-offset-2">
+              산정 기준 보기
+            </Link>
+          </p>
         )}
 
         {result.hugDefaulterMatch?.matched && (
@@ -203,26 +208,6 @@ export default function Analysis() {
               </div>
             </Card>
 
-            {!isLegacy && result.scoreBreakdown && result.scoreBreakdown.length > 0 && (
-              <Card className="lg:py-3">
-                <h2 className="text-sm font-bold text-text-dark">종합 점수 계산 근거</h2>
-                <p className="mt-1 text-[11px] text-text-gray">
-                  각 항목 점수를 아래 비중으로 반영해 종합 위험도를 계산했어요.
-                </p>
-                <ul className="mt-2 flex flex-col gap-1">
-                  {result.scoreBreakdown.map((item) => (
-                    <li key={item.name} className="flex items-center justify-between text-[11px]">
-                      <span className="text-text-dark">{item.name}</span>
-                      <span className="text-text-gray">
-                        {item.included
-                          ? `${item.score}점 × 반영비중 ${Math.round(item.weight * 100)}%`
-                          : '데이터 없음 · 계산에서 제외'}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
           </div>
 
           {/* 오른쪽: 발견된 조항 + AI 추천 조치 */}

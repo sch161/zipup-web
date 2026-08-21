@@ -52,7 +52,9 @@ export interface HugLandlordCheck {
 export interface AnalysisResult {
   overallScore: number
   riskLevel: RiskLevel
-  /** 새 분석에만 있음(과거 이력엔 없어 undefined) — 어떤 카테고리가 몇 %로 반영됐는지. */
+  /** 새 분석에만 있음(과거 이력엔 없어 undefined) — 어떤 카테고리가 몇 %로 반영됐는지.
+   * 결과 화면에는 표시하지 않는다(일반적인 산정 기준 설명은 /scoring 페이지로 분리) —
+   * 응답을 그 자체로 검증 가능하게 남겨두기 위해 계속 반환한다. */
   scoreBreakdown?: ScoreBreakdownItem[]
   /** 과거 이력(scoreDirection 컬럼 추가 이전 마이그레이션)에는 없을 수 있다 — 그 경우
    * 'legacy_low_is_risky'로 취급해야 안전하다(값이 없다고 새 기준으로 잘못 해석하면 안 됨). */

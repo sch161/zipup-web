@@ -8,6 +8,7 @@ import Cure from './pages/Cure'
 import GaslightingDetail from './pages/GaslightingDetail'
 import Privacy from './pages/Privacy'
 import Profile from './pages/Profile'
+import ScoringGuide from './pages/ScoringGuide'
 import SignalMap from './pages/SignalMap'
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
       <Route path="/analysis" element={<Analysis />} />
       <Route path="/psych-guard/:id" element={<GaslightingDetail />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/scoring" element={<ScoringGuide />} />
 
       <Route element={<MainLayout />}>
         <Route path="/home" element={<Home />} />

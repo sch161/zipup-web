@@ -416,6 +416,14 @@ export default function Profile() {
       {/* 정책 / 고객센터 */}
       <Card className="p-0">
         <Link
+          to="/scoring"
+          className="flex items-center justify-between px-4 py-3.5 text-sm font-medium text-text-dark"
+        >
+          위험도 산정 기준
+          <span className="text-text-lightgray">›</span>
+        </Link>
+        <div className="border-t border-border" />
+        <Link
           to="/privacy"
           className="flex items-center justify-between px-4 py-3.5 text-sm font-medium text-text-dark"
         >
