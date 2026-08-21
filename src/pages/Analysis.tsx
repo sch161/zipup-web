@@ -66,6 +66,9 @@ export default function Analysis() {
   const location = useLocation()
   const navState = (location.state as { result?: AnalysisResult } | null)?.result
   const result = navState ?? readLastAnalysis()
+  // scoreDirection이 없는 값(과거 이력 등 예상치 못한 경우)은 안전하게 legacy로 취급한다 —
+  // "혹시 몰라 새 기준으로 해석"하면 숫자와 등급이 반대로 보일 위험이 있다.
+  const isLegacy = result?.scoreDirection !== 'high_is_risky'
 
   useEffect(() => {
     if (!navState) return
@@ -107,6 +110,14 @@ export default function Analysis() {
           <h1 className="text-lg font-bold text-primary lg:text-xl lg:text-text-dark">위험도 분석 결과</h1>
         </div>
 
+        {isLegacy ? (
+          <p className="mt-2 text-pretty text-[11px] leading-relaxed text-text-lightgray">
+            <BrokenText text="이 분석은 예전 채점 기준으로 계산된 결과예요. 지금과 달리 그때는 점수가 낮을수록 위험하다는 뜻이었어요." />
+          </p>
+        ) : (
+          <p className="mt-2 text-[11px] text-text-lightgray">점수가 높을수록 위험합니다.</p>
+        )}
+
         {result.hugDefaulterMatch?.matched && (
           <div className="mt-3 rounded-card border-2 border-danger bg-danger-bg p-3 lg:mt-3">
             <p className="text-balance text-sm font-bold text-danger">
@@ -140,10 +151,9 @@ export default function Analysis() {
               {result.hugLandlordCheck.reason}
               <br />
               <span className="text-text-gray">
-                * 실제 명단 대조가 아니라 AI가 알려진 사기 피해 패턴과 계약서 내용을 비교해 추정한 결과예요.
-                {result.hugDefaulterMatch?.matched
-                  ? ''
-                  : ' 위 HUG 공식 명단 일치와는 별개의 참고 정보이니 함께 확인하세요.'}
+                * AI가 비교해서 알려주는 참고 정보예요(실제 명단 대조가 아니라, 알려진 전세사기 피해
+                사례와 계약서 내용을 비교한 추정 결과라 그래요).
+                {result.hugDefaulterMatch?.matched ? ' 위의 HUG 공식 명단 확인 결과와 함께 봐주세요.' : ''}
               </span>
             </p>
           </div>
@@ -171,19 +181,48 @@ export default function Analysis() {
                   <div key={category.name}>
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium text-text-dark">{category.name}</span>
-                      <span className={`font-bold ${levelTextColor[category.level]}`}>{category.score}점</span>
+                      {category.score != null && category.level != null ? (
+                        <span className={`font-bold ${levelTextColor[category.level]}`}>{category.score}점</span>
+                      ) : (
+                        <span className="font-bold text-text-lightgray">데이터 없음</span>
+                      )}
                     </div>
-                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-border-input/40">
-                      <div
-                        className={`h-full rounded-full ${levelBarColor[category.level]}`}
-                        style={{ width: `${category.score}%` }}
-                      />
-                    </div>
+                    {category.score != null && category.level != null ? (
+                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-border-input/40">
+                        <div
+                          className={`h-full rounded-full ${levelBarColor[category.level]}`}
+                          style={{ width: `${category.score}%` }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-border-input/40" />
+                    )}
                     <p className="mt-0.5 text-pretty text-[11px] leading-snug text-text-lightgray">{category.comment}</p>
                   </div>
                 ))}
               </div>
             </Card>
+
+            {!isLegacy && result.scoreBreakdown && result.scoreBreakdown.length > 0 && (
+              <Card className="lg:py-3">
+                <h2 className="text-sm font-bold text-text-dark">종합 점수 계산 근거</h2>
+                <p className="mt-1 text-[11px] text-text-gray">
+                  각 항목 점수를 아래 비중으로 반영해 종합 위험도를 계산했어요.
+                </p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {result.scoreBreakdown.map((item) => (
+                    <li key={item.name} className="flex items-center justify-between text-[11px]">
+                      <span className="text-text-dark">{item.name}</span>
+                      <span className="text-text-gray">
+                        {item.included
+                          ? `${item.score}점 × 반영비중 ${Math.round(item.weight * 100)}%`
+                          : '데이터 없음 · 계산에서 제외'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
           </div>
 
           {/* 오른쪽: 발견된 조항 + AI 추천 조치 */}

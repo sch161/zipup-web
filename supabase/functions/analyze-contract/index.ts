@@ -8,6 +8,13 @@ import { base64ToBytes, bytesToBase64 } from '../_shared/base64.ts'
 import { mimeTypeToClovaFormat, runClovaOcr } from '../_shared/clovaOcr.ts'
 import { findPiiMasks } from '../_shared/piiMask.ts'
 import { applyBlackBoxes, prepareImageForOcr } from '../_shared/imageMask.ts'
+import { jeonseRatioScore } from '../_shared/riskScore.ts'
+import {
+  calculateOverallScore,
+  scoreToRiskLevel,
+  type CategoryName,
+  type ScoredCategory,
+} from '../_shared/contractScore.ts'
 
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 // Pinned model versions keep getting retired/restricted (2.0-flash, then 2.5-flash for new
@@ -62,34 +69,43 @@ interface HugDefaulterMatch {
   similarity: number
 }
 
+// Gemini가 매기는 카테고리는 3개뿐이다 — 전세가율은 서버가 국토부 실거래가로 직접 계산해서
+// 별도로 추가한다(계산 로직은 아래 computeJeonseRatioCategory 참고).
+const GEMINI_CATEGORY_NAMES: readonly CategoryName[] = ['권리관계', '특약사항', '건물상태']
+
 const ANALYSIS_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    overallScore: { type: 'INTEGER', description: '0(매우 위험)~100(매우 안전) 종합 위험도 점수' },
-    riskLevel: { type: 'STRING', enum: RISK_LEVELS },
     // RAG 고도화: contract_risk_patterns의 실제 피해 사례 20건과 계약서를 대조한 AI 추정.
-    // 실제 HUG 명단 대조가 아니라 패턴 텍스트 기반 "추정"이라는 점을 프론트에서도 명확히 구분해서
+    // 실제 HUG 명단 대조가 아니라 사례 기반 "추정"이라는 점을 프론트에서도 명확히 구분해서
     // 보여줘야 한다 — 진짜 명단 대조 결과는 hugDefaulterMatch(아래)를 따로 둔다.
     hugLandlordCheck: {
       type: 'OBJECT',
       properties: {
-        isBlacklisted: { type: 'BOOLEAN', description: 'contract_risk_patterns의 실제 피해 패턴과 계약서 내용이 일치하는지 여부 (true/false)' },
-        reason: { type: 'STRING', description: '패턴 DB의 어떤 사례와 대조했는지에 대한 근거 설명, 1문장' },
+        isBlacklisted: { type: 'BOOLEAN', description: '피해 사례 모음의 위험 패턴과 계약서 내용이 일치하는지 여부 (true/false)' },
+        reason: {
+          type: 'STRING',
+          description:
+            '일반인이 이해할 수 있는 자연스러운 문장으로 된 근거 설명, 1문장. "패턴 DB", "사례 3번"처럼 내부 자료 구조나 번호를 언급하는 표현은 금지.',
+        },
       },
       required: ['isBlacklisted', 'reason'],
     },
+    // overallScore/riskLevel은 여기 없다 — Gemini가 임의로 매기면 카테고리 점수와 수학적으로
+    // 안 맞고 재현성도 없어서, 서버가 카테고리 점수의 가중평균으로 직접 계산한다
+    // (_shared/contractScore.ts의 calculateOverallScore 참고).
     categories: {
       type: 'ARRAY',
       items: {
         type: 'OBJECT',
         properties: {
-          name: { type: 'STRING', description: '권리관계 | 특약사항 | 전세가율 | 건물상태 중 하나' },
-          score: { type: 'INTEGER' },
-          level: { type: 'STRING', enum: RISK_LEVELS },
+          name: { type: 'STRING', description: '권리관계 | 특약사항 | 건물상태 중 하나' },
+          score: { type: 'INTEGER', description: '0~100점, 높을수록 위험' },
           comment: { type: 'STRING', description: '1문장으로 간결하게' },
         },
-        required: ['name', 'score', 'level', 'comment'],
+        required: ['name', 'score', 'comment'],
       },
+      description: '권리관계, 특약사항, 건물상태 3개 항목만. 전세가율은 서버가 별도로 계산해 추가하므로 포함하지 않는다.',
     },
     detectedClauses: {
       type: 'ARRAY',
@@ -112,15 +128,7 @@ const ANALYSIS_RESPONSE_SCHEMA = {
     // landlordName은 여기 없다 — Gemini가 받는 이미지는 임대인 이름이 이미 마스킹된 상태라
     // 스스로 읽어낼 수 없다. 실제 값은 마스킹 전 CLOVA OCR로 서버가 직접 읽어 아래에서 주입한다.
   },
-  required: [
-    'overallScore',
-    'riskLevel',
-    'hugLandlordCheck',
-    'categories',
-    'detectedClauses',
-    'recommendedActions',
-    'aiComment',
-  ],
+  required: ['hugLandlordCheck', 'categories', 'detectedClauses', 'recommendedActions', 'aiComment'],
 }
 
 // 429(RESOURCE_EXHAUSTED)/503(UNAVAILABLE)는 대개 일시적인 과부하/쿼터 순간 스파이크라
@@ -181,7 +189,7 @@ function truncate(text: string, maxLen: number): string {
 }
 
 function formatRiskPatterns(patterns: RiskPattern[]): string {
-  if (patterns.length === 0) return '(연동된 피해 패턴 데이터가 없습니다)'
+  if (patterns.length === 0) return '(연동된 피해 사례 데이터가 없습니다)'
   return patterns
     .map(
       (p, i) =>
@@ -192,9 +200,9 @@ function formatRiskPatterns(patterns: RiskPattern[]): string {
 
 function buildPrompt(input: AnalyzeRequest, referenceData: string): string {
   return `당신은 대한민국 최고 수준의 부동산 임대차 계약서 분석 및 전세사기 예방 AI 전문가입니다.
-아래 매물 정보, 첨부 문서, 그리고 [전세사기 및 독소조항 피해 패턴 DB]를 바탕으로 위험도를 정밀 진단하세요.
+아래 매물 정보, 첨부 문서, 그리고 [전세사기 및 독소조항 피해 사례 모음]을 바탕으로 위험도를 정밀 진단하세요.
 
-[RAG 시스템 연동 - 전세사기 및 독소조항 피해 패턴 DB]
+[전세사기 및 독소조항 피해 사례 모음]
 ${referenceData}
 
 [분석 대상 매물 정보]
@@ -203,11 +211,11 @@ ${referenceData}
 - 건물 유형: ${input.buildingType ?? '정보 없음'}
 
 [엄격한 AI 분석 지침]
-1. 제공된 [전세사기 및 독소조항 피해 패턴 DB]의 실제 피해 조건들과 사용자가 제출한 계약서/등기부등본 텍스트를 1:1로 정밀 대조하세요.
-2. 만약 DB에 등록된 대항력 악용, 신탁 부동산, 바지사장 넘기기, 과도한 원상복구 등 위험 패턴이 발견된다면, hugLandlordCheck.isBlacklisted를 true로 설정하고, overallScore(종합점수)는 무조건 40점 미만(danger)으로 낮추세요. hugLandlordCheck는 어디까지나 패턴 DB 기반 "추정"이며 실제 임대인 신원을 확인한 결과가 아니라는 점을 reason에서도(1문장) 분명히 하세요.
-3. 세입자가 이해하기 어려운 법률 용어(대항력, 신탁, 당해세 등)는 쉽게 풀어서 설명하고, DB에 제시된 '권장 대처 및 방어 특약' 내용을 recommendedActions에 적극 반영하세요.
-4. 데이터베이스에 명시된 사실과 규칙에 철저히 기반하여 답변하고, 근거 없는 거짓말(환각 현상)을 엄격히 차단하세요.
-5. 권리관계, 특약사항, 전세가율, 건물상태 4개 항목을 각각 0~100점(높을수록 안전)으로 평가하세요. comment는 1문장으로 간결하게 쓰세요.
+1. 제공된 [전세사기 및 독소조항 피해 사례 모음]의 실제 피해 조건들과 사용자가 제출한 계약서/등기부등본 텍스트를 1:1로 정밀 대조하세요.
+2. 대항력 악용, 신탁 부동산, 바지사장 넘기기, 과도한 원상복구 등 위 사례와 일치하는 위험 패턴이 발견되면 hugLandlordCheck.isBlacklisted를 true로 설정하고, 권리관계·특약사항 등 관련 카테고리 점수를 명확히 높게(위험하게) 매기세요. hugLandlordCheck는 어디까지나 사례 기반 "추정"이며 실제 임대인 신원을 확인한 결과가 아니라는 점을 reason에서(1문장) 분명히 하되, reason은 반드시 일반인이 이해할 수 있는 자연스러운 문장으로 쓰세요 — "패턴 DB", "사례 3번"처럼 내부 자료 구조나 번호는 절대 언급하지 말고, 예를 들면 "이 계약서를 실제 전세사기 피해 사례들과 비교한 결과, 보증금을 못 받을 위험이 큰 조항이 발견됐어요." 같은 식으로 쓰세요.
+3. 세입자가 이해하기 어려운 법률 용어(대항력, 신탁, 당해세 등)는 쉽게 풀어서 설명하고, 사례에 제시된 권장 대처 내용을 recommendedActions에 적극 반영하세요.
+4. 제공된 사실과 사례에 철저히 기반하여 답변하고, 근거 없는 거짓말(환각 현상)을 엄격히 차단하세요.
+5. 권리관계, 특약사항, 건물상태 3개 항목을 각각 0~100점(높을수록 위험)으로 평가하세요. comment는 1문장으로 간결하게 쓰세요. (전세가율은 서버가 실거래가 데이터로 직접 계산해 추가하므로 categories에 포함하지 마세요.)
 6. 첨부된 문서가 있다면 위험하거나 주의가 필요한 조항을 detectedClauses에 구체적으로 추출하세요(explanation은 1~2문장). 첨부 문서가 없다면 빈 배열([])로 두세요.
 7. 첨부된 문서 이미지에는 개인정보 보호를 위해 주민등록번호·계좌번호·연락처·성명 등 일부 영역이 검은 사각형으로 가려져 있습니다. 이는 정상적인 처리이니 가려진 부분을 추측해서 채우거나 문제로 언급하지 말고, 가려지지 않은 나머지 내용(보증금, 주소, 특약사항 등)만으로 분석하세요.
 8. recommendedActions는 가장 중요한 3~5개만 문장으로 나열하세요.
@@ -239,6 +247,88 @@ async function resolveUserId(req: Request): Promise<string | null> {
     data: { user },
   } = await supabaseAuth.auth.getUser(token)
   return user?.id ?? null
+}
+
+/** Gemini가 돌려준 categories 배열에서 기대하는 3개 카테고리만 안전하게 뽑아낸다. Gemini 응답은
+ *  타입이 강제되지 않는 외부 텍스트라, 이름이 빠지거나 score가 이상한 형식으로 와도 죽지 않고
+ *  해당 카테고리를 "데이터 없음"으로 처리해 종합 점수 계산에서 자연스럽게 제외되게 한다. */
+function coerceGeminiCategories(raw: unknown): ScoredCategory[] {
+  const list = Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []
+
+  return GEMINI_CATEGORY_NAMES.map((name) => {
+    const match = list.find((c) => c && c.name === name)
+    const rawScore = match?.score
+    if (typeof rawScore !== 'number' || !Number.isFinite(rawScore)) {
+      console.error(`Gemini response missing/invalid score for category "${name}", excluding from overall score`)
+      return { name, score: null, comment: '이 항목에 대한 분석 결과를 받지 못했어요.' }
+    }
+    return {
+      name,
+      score: Math.max(0, Math.min(100, Math.round(rawScore))),
+      comment: typeof match?.comment === 'string' ? match.comment : '',
+    }
+  })
+}
+
+interface RegionMatch {
+  region_code: string
+  region_name: string
+  avg_sale_price: number | null
+  villa_avg_sale_price: number | null
+}
+
+// "다세대주택"이 이 서비스의 기본 건물 유형 placeholder이고 실제로 전세사기 위험이 훨씬 크게
+// 발생하는 쪽이라, 건물 유형에 "아파트"가 명시되지 않은 이상 빌라(연립다세대) 시세를 기본으로
+// 쓴다. 선택된 쪽 데이터가 그 달에 없으면(null) 반대쪽으로 대체한다.
+function pickEffectiveSalePrice(
+  buildingType: string | undefined,
+  avgSalePrice: number | null,
+  villaAvgSalePrice: number | null,
+): number | null {
+  const isApartment = (buildingType ?? '').includes('아파트')
+  const primary = isApartment ? avgSalePrice : villaAvgSalePrice
+  const fallback = isApartment ? villaAvgSalePrice : avgSalePrice
+  return primary ?? fallback ?? null
+}
+
+/** 전세가율 카테고리를 서버에서 직접 계산한다: 계약서의 보증금을 매물 주소가 속한 지역의 평균
+ *  매매가와 비교한다(안심 시그널 맵과 동일한 jeonseRatioScore 곡선 재사용, 점수 방향도 동일하게
+ *  "높을수록 위험"). 주소 매칭 실패, 보증금 미입력, 해당 지역 시세 데이터 없음 등 어떤 이유로든
+ *  계산할 근거가 없으면 score: null("데이터 없음")을 반환한다 — 임의 점수를 매기지 않고 종합
+ *  점수 계산에서 이 항목을 제외시키기 위함(calculateOverallScore가 자동으로 처리). */
+async function computeJeonseRatioCategory(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  input: AnalyzeRequest,
+): Promise<ScoredCategory> {
+  const noData = (comment: string): ScoredCategory => ({ name: '전세가율', score: null, comment })
+
+  if (!input.address?.trim()) return noData('매물 주소가 없어 전세가율을 계산할 수 없어요.')
+
+  const depositNum = Number(input.deposit)
+  if (!input.deposit || !Number.isFinite(depositNum) || depositNum <= 0) {
+    return noData('보증금 정보가 없어 전세가율을 계산할 수 없어요.')
+  }
+
+  const { data, error } = await supabaseAdmin.rpc('match_region_by_address', { input_address: input.address })
+  if (error) {
+    console.error('match_region_by_address failed, excluding 전세가율 from score', error)
+    return noData('주소로 지역 시세 데이터를 찾는 중 문제가 발생했어요.')
+  }
+
+  const region = (data as RegionMatch[] | null)?.[0]
+  if (!region) return noData('주소와 일치하는 지역 시세 데이터를 찾지 못했어요. 데이터 없음으로 처리했어요.')
+
+  const salePrice = pickEffectiveSalePrice(input.buildingType, region.avg_sale_price, region.villa_avg_sale_price)
+  if (salePrice == null || salePrice <= 0) {
+    return noData(`${region.region_name}의 최근 실거래가 데이터가 아직 없어 데이터 없음으로 처리했어요.`)
+  }
+
+  const ratio = (depositNum / salePrice) * 100
+  return {
+    name: '전세가율',
+    score: Math.round(jeonseRatioScore(ratio)),
+    comment: `${region.region_name} 평균 매매가 대비 보증금 비율은 약 ${Math.round(ratio)}%예요.`,
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -337,17 +427,21 @@ Deno.serve(async (req: Request) => {
   const startedAt = Date.now()
 
   try {
-    const { ok, status, bodyText } = await callGeminiWithRetry(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{ role: 'user', parts }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: ANALYSIS_RESPONSE_SCHEMA,
+    // Gemini 호출과 전세가율 계산(국토부 실거래가 DB 조회)은 서로 무관하므로 병렬로 실행한다.
+    const [{ ok, status, bodyText }, jeonseRatioCategory] = await Promise.all([
+      callGeminiWithRetry(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          contents: [{ role: 'user', parts }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: ANALYSIS_RESPONSE_SCHEMA,
+          },
         },
-      },
-      28000,
-    )
+        28000,
+      ),
+      computeJeonseRatioCategory(supabaseAdmin, input),
+    ])
 
     if (!ok) {
       console.error(`Gemini API error ${status} after retries (${Date.now() - startedAt}ms)`, bodyText.slice(0, 500))
@@ -362,9 +456,39 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: 'AI로부터 응답을 받지 못했습니다.' }, 502)
     }
 
-    const result = JSON.parse(text)
-    // Gemini 응답에는 landlordName이 없다(마스킹된 이미지만 봤으므로) — OCR로 읽은 값을 주입한다.
-    result.landlordName = landlordNameFromOcr
+    const geminiResult = JSON.parse(text)
+
+    // Gemini의 3개 카테고리 + 서버가 계산한 전세가율 카테고리를 합쳐 종합 점수를 가중평균으로
+    // 계산한다(_shared/contractScore.ts). hugLandlordCheck.isBlacklisted가 true면 계산 결과가
+    // 낮게 나와도 danger 하한으로 끌어올린다.
+    const categories = [...coerceGeminiCategories(geminiResult.categories), jeonseRatioCategory]
+    const { overallScore, riskLevel, breakdown } = calculateOverallScore(
+      categories,
+      geminiResult.hugLandlordCheck?.isBlacklisted === true,
+    )
+
+    const result = {
+      overallScore,
+      riskLevel,
+      // 점수 계산 근거(어떤 항목이 몇 %로 반영됐는지)를 화면에 보여주기 위한 값.
+      scoreBreakdown: breakdown,
+      // 새로 저장/반환되는 분석은 전부 "높을수록 위험" 기준이다. 과거(낮을수록 위험) 데이터와
+      // 구분하기 위해 명시적으로 표시한다 — src/pages/Analysis.tsx가 이 값을 보고 legacy 데이터면
+      // 다른 안내를 보여준다.
+      scoreDirection: 'high_is_risky' as const,
+      categories: categories.map((c) => ({
+        name: c.name,
+        score: c.score,
+        level: c.score != null ? scoreToRiskLevel(c.score) : null,
+        comment: c.comment,
+      })),
+      detectedClauses: geminiResult.detectedClauses ?? [],
+      recommendedActions: geminiResult.recommendedActions ?? [],
+      aiComment: geminiResult.aiComment ?? '',
+      hugLandlordCheck: geminiResult.hugLandlordCheck,
+      // Gemini 응답에는 landlordName이 없다(마스킹된 이미지만 봤으므로) — OCR로 읽은 값을 주입한다.
+      landlordName: landlordNameFromOcr,
+    } as Record<string, unknown>
 
     // 임대인 이름이 확인됐다면 HUG 상습채무불이행자 명단과 trigram 유사도로 "사실 대조"한다.
     // 위의 hugLandlordCheck(AI 패턴 추정)와는 별개로, 이쪽이 실제 명단 기반이라 신뢰도가 더 높다.
@@ -387,10 +511,11 @@ Deno.serve(async (req: Request) => {
       address: input.address || null,
       deposit: input.deposit || null,
       building_type: input.buildingType || null,
-      overall_score: result.overallScore,
-      risk_level: result.riskLevel,
+      overall_score: overallScore,
+      risk_level: riskLevel,
+      score_direction: 'high_is_risky',
       categories: result.categories,
-      detected_clauses: result.detectedClauses ?? [],
+      detected_clauses: result.detectedClauses,
       recommended_actions: result.recommendedActions,
       ai_comment: result.aiComment,
     })

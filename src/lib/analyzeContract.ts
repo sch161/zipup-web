@@ -3,11 +3,26 @@ import { supabase } from './supabase'
 
 export type RiskLevel = 'danger' | 'warning' | 'success'
 
+/** 2026-08-21 이후 분석: 점수는 SignalMap(안심 시그널 맵)과 동일하게 "높을수록 위험"이다.
+ * legacy_low_is_risky는 그 이전에 저장된 기존 이력 — 낮을수록 위험이었다. AnalysisResult의
+ * scoreDirection을 보고 화면에서 다르게 안내해야 한다(src/pages/Analysis.tsx 참고). */
+export type ScoreDirection = 'high_is_risky' | 'legacy_low_is_risky'
+
 export interface AnalysisCategory {
   name: string
-  score: number
-  level: RiskLevel
+  /** null이면 "데이터 없음"(예: 매물 주소로 지역 시세를 찾지 못한 경우) — 종합 점수 계산에서도 제외됨. */
+  score: number | null
+  level: RiskLevel | null
   comment: string
+}
+
+/** 종합 점수 계산에 각 카테고리가 얼마의 가중치로 반영됐는지. score가 null인 카테고리는
+ * included:false, weight:0으로 오고 나머지 카테고리끼리 가중치가 재정규화된다. */
+export interface ScoreBreakdownItem {
+  name: string
+  score: number | null
+  weight: number
+  included: boolean
 }
 
 export interface DetectedClause {
@@ -37,6 +52,11 @@ export interface HugLandlordCheck {
 export interface AnalysisResult {
   overallScore: number
   riskLevel: RiskLevel
+  /** 새 분석에만 있음(과거 이력엔 없어 undefined) — 어떤 카테고리가 몇 %로 반영됐는지. */
+  scoreBreakdown?: ScoreBreakdownItem[]
+  /** 과거 이력(scoreDirection 컬럼 추가 이전 마이그레이션)에는 없을 수 있다 — 그 경우
+   * 'legacy_low_is_risky'로 취급해야 안전하다(값이 없다고 새 기준으로 잘못 해석하면 안 됨). */
+  scoreDirection?: ScoreDirection
   categories: AnalysisCategory[]
   detectedClauses: DetectedClause[]
   recommendedActions: string[]

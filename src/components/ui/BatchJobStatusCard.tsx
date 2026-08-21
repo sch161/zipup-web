@@ -66,21 +66,30 @@ function formatRelativeTime(iso: string | null): string {
 
 export default function BatchJobStatusCard() {
   const [statusByJob, setStatusByJob] = useState<Record<string, BatchJobStatus>>({})
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [visible, setVisible] = useState(false)
 
   useEffect(() => {
     fetchBatchJobStatus()
       .then((rows) => {
+        // batch_job_status의 RLS는 관리자만 읽도록 제한돼 있다(마이그레이션 참고). 이 테이블은
+        // 항상 4개 행이 시드돼 있으므로, 관리자가 아니면 RLS가 조용히 걸러내 빈 배열이 온다 —
+        // 그 경우 이 개발/운영용 카드를 아예 렌더링하지 않는다.
+        if (rows.length === 0) return
         const byJob: Record<string, BatchJobStatus> = {}
         for (const row of rows) byJob[row.job_name] = row
         setStatusByJob(byJob)
+        setVisible(true)
       })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : '배치 작업 상태를 불러오지 못했습니다.'),
-      )
-      .finally(() => setLoading(false))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : '배치 작업 상태를 불러오지 못했습니다.')
+        setVisible(true)
+      })
   }, [])
+
+  // 로딩 중이거나 관리자가 아니라 빈 배열이 온 경우엔 카드 자체를 렌더링하지 않는다 — 일반
+  // 사용자에게는 이 카드가 존재한다는 낌새조차 보이면 안 되므로, "불러오는 중" 상태도 안 보여준다.
+  if (!visible) return null
 
   return (
     <Card>
@@ -89,10 +98,9 @@ export default function BatchJobStatusCard() {
         안심 시그널 맵·최신 뉴스가 실제로 갱신되고 있는지 확인하는 개발/운영용 상태판이에요.
       </p>
 
-      {loading && <p className="py-4 text-center text-xs text-text-gray">불러오는 중...</p>}
-      {!loading && error && <p className="py-4 text-center text-xs font-medium text-danger">{error}</p>}
+      {error && <p className="py-4 text-center text-xs font-medium text-danger">{error}</p>}
 
-      {!loading && !error && (
+      {!error && (
         <ul className="mt-2 flex flex-col divide-y divide-border">
           {JOB_META.map((meta) => {
             const row = statusByJob[meta.jobName]
