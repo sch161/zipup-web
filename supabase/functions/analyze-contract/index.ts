@@ -4,6 +4,10 @@
 // Each analysis is also persisted to `analyses` via a service_role client (same pattern as analyze-chat).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { base64ToBytes, bytesToBase64 } from '../_shared/base64.ts'
+import { mimeTypeToClovaFormat, runClovaOcr } from '../_shared/clovaOcr.ts'
+import { findPiiMasks } from '../_shared/piiMask.ts'
+import { applyBlackBoxes, prepareImageForOcr } from '../_shared/imageMask.ts'
 
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 // Pinned model versions keep getting retired/restricted (2.0-flash, then 2.5-flash for new
@@ -26,6 +30,11 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 }
+
+// OCR이 실패했거나 좌표를 읽지 못해 개인정보 마스킹을 보장할 수 없을 때 보여줄 메시지.
+// 이 경우 원본이든 부분 마스킹본이든 Gemini에 절대 전송하지 않고 분석 자체를 중단한다.
+const PII_MASK_FAILURE_MESSAGE =
+  '문서에서 개인정보 보호 처리를 완료하지 못해 분석을 진행할 수 없습니다. 주민등록번호·계좌번호·연락처·이름 등 개인정보 부분을 직접 가리고 다시 올려주세요.'
 
 interface AnalyzeRequest {
   address?: string
@@ -100,10 +109,8 @@ const ANALYSIS_RESPONSE_SCHEMA = {
       description: '세입자가 임대인/중개사에게 요구해야 할 필수 방어 특약 및 실행 조치, 가장 중요한 3~5개',
     },
     aiComment: { type: 'STRING', description: '전체 상황에 대한 한국어 종합 코멘트 및 행동 요령, 2~3문장' },
-    landlordName: {
-      type: 'STRING',
-      description: '첨부된 문서(등기부등본/계약서)에서 확인되는 임대인(소유자) 성명. 확인할 수 없으면 빈 문자열.',
-    },
+    // landlordName은 여기 없다 — Gemini가 받는 이미지는 임대인 이름이 이미 마스킹된 상태라
+    // 스스로 읽어낼 수 없다. 실제 값은 마스킹 전 CLOVA OCR로 서버가 직접 읽어 아래에서 주입한다.
   },
   required: [
     'overallScore',
@@ -202,7 +209,7 @@ ${referenceData}
 4. 데이터베이스에 명시된 사실과 규칙에 철저히 기반하여 답변하고, 근거 없는 거짓말(환각 현상)을 엄격히 차단하세요.
 5. 권리관계, 특약사항, 전세가율, 건물상태 4개 항목을 각각 0~100점(높을수록 안전)으로 평가하세요. comment는 1문장으로 간결하게 쓰세요.
 6. 첨부된 문서가 있다면 위험하거나 주의가 필요한 조항을 detectedClauses에 구체적으로 추출하세요(explanation은 1~2문장). 첨부 문서가 없다면 빈 배열([])로 두세요.
-7. 첨부된 문서에서 임대인(소유자) 성명이 확인되면 landlordName에 그대로 적으세요. 확인할 수 없으면 빈 문자열로 두세요.
+7. 첨부된 문서 이미지에는 개인정보 보호를 위해 주민등록번호·계좌번호·연락처·성명 등 일부 영역이 검은 사각형으로 가려져 있습니다. 이는 정상적인 처리이니 가려진 부분을 추측해서 채우거나 문제로 언급하지 말고, 가려지지 않은 나머지 내용(보증금, 주소, 특약사항 등)만으로 분석하세요.
 8. recommendedActions는 가장 중요한 3~5개만 문장으로 나열하세요.
 9. aiComment는 2~3문장으로 핵심만 요약하세요.
 10. 불필요하게 길게 쓰지 말고, 위 문장 수 제한을 반드시 지켜 간결하게 응답하세요. 반드시 지정된 JSON 스키마 형식으로만 응답을 반환하세요.`
@@ -259,6 +266,64 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: '매물 주소 또는 분석할 문서가 필요합니다.' }, 400)
   }
 
+  // 임대인 이름은 OCR로 직접 읽어 HUG 명단 조회에만 쓴다 — Gemini는 마스킹된 이미지만 보므로
+  // 이 이름을 알 방법이 없다. 파일이 없으면(주소만으로 분석) 빈 문자열로 남아 HUG 조회를 건너뛴다.
+  let landlordNameFromOcr = ''
+
+  if (input.fileBase64 && input.fileMimeType) {
+    if (!mimeTypeToClovaFormat(input.fileMimeType)) {
+      return jsonResponse({ error: '이미지 파일(JPG, PNG)만 업로드할 수 있습니다.' }, 400)
+    }
+
+    // 해상도가 큰 사진은 OCR로 보내기 전에 먼저 축소·PNG로 정규화한다 — 이후 OCR 좌표와 마스킹이
+    // 항상 이 바이트 기준으로 일치하게 하기 위함(원본 그대로 OCR에 보내고 나중에 별도로 축소하면
+    // 좌표가 어긋난다). 실패하면 마스킹을 보장할 수 없으므로 분석을 중단한다.
+    let workingImageBytes: Uint8Array
+    try {
+      workingImageBytes = await prepareImageForOcr(base64ToBytes(input.fileBase64))
+    } catch (err) {
+      console.error('Image normalize/resize failed, blocking analysis (cannot guarantee PII masking)', err)
+      return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
+    }
+
+    let ocrFields: Awaited<ReturnType<typeof runClovaOcr>>
+    try {
+      ocrFields = await runClovaOcr(bytesToBase64(workingImageBytes), 'png')
+    } catch (err) {
+      console.error('CLOVA OCR failed, blocking analysis (cannot guarantee PII masking)', err)
+      return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
+    }
+
+    if (ocrFields.length === 0) {
+      console.error('CLOVA OCR returned no fields, blocking analysis (cannot guarantee PII masking)')
+      return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
+    }
+
+    const { boxes, landlordName, stats } = findPiiMasks(ocrFields)
+    landlordNameFromOcr = landlordName
+
+    // 실제 계약서에서 마스킹이 잘 되고 있는지 추적하기 위한 로그. 개수·유형만 남기고, 읽은 텍스트나
+    // 이름 같은 실제 값은 절대 포함하지 않는다 — stats는 숫자 필드로만 이뤄져 있다(piiMask.ts 참고).
+    console.log('PII mask summary', JSON.stringify(stats))
+
+    let maskedImageBase64: string
+    try {
+      const maskedBytes = await applyBlackBoxes(workingImageBytes, boxes)
+      maskedImageBase64 = bytesToBase64(maskedBytes)
+    } catch (err) {
+      console.error(
+        `PII masking failed, blocking analysis (refusing to send an unmasked image) — had ${stats.totalFields} OCR fields, ${stats.maskedFields} flagged for masking`,
+        err,
+      )
+      return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
+    }
+
+    // 원본은 여기서 끝 — 마스킹된 버전으로 교체하고 원본 base64는 더 이상 참조하지 않는다.
+    // 애초에 어디에도 저장하지 않으므로(요청 처리 후 응답과 함께 폐기) 별도 삭제 로직은 불필요.
+    input.fileBase64 = maskedImageBase64
+    input.fileMimeType = 'image/png'
+  }
+
   const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
   const riskPatterns = await fetchAllRiskPatterns(supabaseAdmin)
@@ -298,13 +363,15 @@ Deno.serve(async (req: Request) => {
     }
 
     const result = JSON.parse(text)
+    // Gemini 응답에는 landlordName이 없다(마스킹된 이미지만 봤으므로) — OCR로 읽은 값을 주입한다.
+    result.landlordName = landlordNameFromOcr
 
     // 임대인 이름이 확인됐다면 HUG 상습채무불이행자 명단과 trigram 유사도로 "사실 대조"한다.
     // 위의 hugLandlordCheck(AI 패턴 추정)와는 별개로, 이쪽이 실제 명단 기반이라 신뢰도가 더 높다.
-    if (typeof result.landlordName === 'string' && result.landlordName.trim()) {
+    if (landlordNameFromOcr.trim()) {
       const { data: nameMatches, error: nameMatchError } = await supabaseAdmin.rpc(
         'search_hug_defaulters_by_name',
-        { query_name: result.landlordName.trim() },
+        { query_name: landlordNameFromOcr.trim() },
       )
       if (nameMatchError) {
         console.error('search_hug_defaulters_by_name failed, continuing without match info', nameMatchError)

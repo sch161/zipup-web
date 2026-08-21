@@ -13,6 +13,7 @@ import Card from "../components/ui/Card";
 import Input from "../components/ui/Input";
 import { analyzeContract } from "../lib/analyzeContract";
 import { fetchLatestNews, type NewsItem } from "../lib/news";
+import { convertPdfToImage } from "../lib/pdfToImage";
 
 function formatNewsDate(value: string): string {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -35,6 +36,10 @@ const TRUST_FACTS = [
 ];
 
 const NEWS_PAGE_SIZE = 3;
+
+// 서버가 업로드된 이미지를 OCR 전에 자동으로 축소하므로 사진 해상도 자체는 걱정하지 않아도 되지만,
+// 네트워크 전송량을 위해 과도하게 큰 파일(예: 잘못 선택한 동영상)은 업로드 전에 걸러낸다.
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 const FEATURES = [
   {
@@ -67,6 +72,8 @@ export default function Home() {
   const [newsLoading, setNewsLoading] = useState(true);
   const [newsError, setNewsError] = useState<string | null>(null);
   const [newsExpanded, setNewsExpanded] = useState(false);
+  const [pdfConverting, setPdfConverting] = useState(false);
+  const [pdfPageWarning, setPdfPageWarning] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLatestNews(12)
@@ -79,8 +86,50 @@ export default function Home() {
       .finally(() => setNewsLoading(false));
   }, []);
 
+  async function selectFile(candidate: File | null) {
+    if (!candidate) return;
+    if (candidate.size > MAX_UPLOAD_BYTES) {
+      setError(
+        `파일이 너무 큽니다. ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))}MB 이하로 올려주세요.`,
+      );
+      return;
+    }
+    setError(null);
+    setPdfPageWarning(null);
+
+    const isPdf =
+      candidate.type === "application/pdf" ||
+      candidate.name.toLowerCase().endsWith(".pdf");
+
+    if (!isPdf) {
+      setFile(candidate);
+      return;
+    }
+
+    setPdfConverting(true);
+    setFile(null);
+    try {
+      const converted = await convertPdfToImage(candidate);
+      if (converted.file.size > MAX_UPLOAD_BYTES) {
+        setError("변환된 이미지가 너무 큽니다. 더 짧은 PDF로 다시 시도해주세요.");
+        return;
+      }
+      setFile(converted.file);
+      if (converted.isLowRes) {
+        setPdfPageWarning(
+          `페이지가 많아(${converted.pageCount}쪽) 일부 작은 글씨의 인식률이 떨어질 수 있어요.`,
+        );
+      }
+    } catch (err) {
+      console.error("PDF conversion failed", err);
+      setError("이 PDF는 처리할 수 없습니다. 사진으로 찍어서 올려주세요.");
+    } finally {
+      setPdfConverting(false);
+    }
+  }
+
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
-    setFile(e.target.files?.[0] ?? null);
+    void selectFile(e.target.files?.[0] ?? null);
   }
 
   function handleDragOver(e: DragEvent<HTMLLabelElement>) {
@@ -96,8 +145,7 @@ export default function Home() {
   function handleDrop(e: DragEvent<HTMLLabelElement>) {
     e.preventDefault();
     setIsDragging(false);
-    const dropped = e.dataTransfer.files?.[0];
-    if (dropped) setFile(dropped);
+    void selectFile(e.dataTransfer.files?.[0] ?? null);
   }
 
   async function handleAnalyze(e: FormEvent) {
@@ -169,9 +217,6 @@ export default function Home() {
 
         <Card className="flex flex-col gap-4 lg:p-[30px]">
           <div>
-            <h2 className="text-[15px] font-bold text-text-dark lg:text-[17px]">
-              계약서 위험도 분석
-            </h2>
             <p className="mt-1 text-xs leading-relaxed text-text-gray lg:text-[13.5px]">
               <BrokenText text="등기부등본이나 계약서를 업로드하면 AI가 위험 조항을 자동으로 찾아드려요." />
             </p>
@@ -193,11 +238,13 @@ export default function Home() {
               ↑
             </span>
             <span className="text-[13px] font-bold text-text-dark">
-              {file
-                ? `✓ ${file.name}`
-                : isDragging
-                  ? "여기에 파일을 놓으세요"
-                  : "계약서 파일을 끌어다 놓으세요"}
+              {pdfConverting
+                ? "PDF 변환 중..."
+                : file
+                  ? `✓ ${file.name}`
+                  : isDragging
+                    ? "여기에 파일을 놓으세요"
+                    : "계약서 파일을 끌어다 놓으세요"}
             </span>
             <input
               id="scan-upload"
@@ -208,8 +255,17 @@ export default function Home() {
             />
           </label>
           <p className="-mt-2 text-[11px] text-text-lightgray">
-            <BrokenText text={'PDF · JPG · PNG · 최대 20MB · 한글(HWP)은 "다른 이름으로 저장 → PDF"로 변환 후 업로드해주세요.'} />
+            <BrokenText
+              text={
+                'JPG · PNG · PDF · 최대 15MB · PDF는 업로드 시 자동으로 이미지로 변환돼요.'
+              }
+            />
           </p>
+          {pdfPageWarning && (
+            <p className="-mt-2 text-[11px] text-amber-600">
+              <BrokenText text={`⚠ ${pdfPageWarning}`} />
+            </p>
+          )}
 
           <form onSubmit={handleAnalyze} className="flex flex-col gap-3">
             <Input
@@ -239,10 +295,16 @@ export default function Home() {
               />
             </div>
 
-            {error && <p className="text-xs font-medium text-danger">{error}</p>}
+            {error && (
+              <p className="text-xs font-medium text-danger">{error}</p>
+            )}
 
-            <Button type="submit" className="mt-1" disabled={loading}>
-              {loading ? "AI가 분석하는 중..." : "위험도 분석 시작"}
+            <Button type="submit" className="mt-1" disabled={loading || pdfConverting}>
+              {loading
+                ? "AI가 분석하는 중..."
+                : pdfConverting
+                  ? "PDF 변환 중..."
+                  : "위험도 분석 시작"}
             </Button>
           </form>
           <p className="text-center text-[11px] text-text-lightgray">
@@ -289,7 +351,10 @@ export default function Home() {
           ) : (
             <>
               <ul className="flex flex-col divide-y divide-border px-4">
-                {(newsExpanded ? newsItems : newsItems.slice(0, NEWS_PAGE_SIZE)).map((item) => (
+                {(newsExpanded
+                  ? newsItems
+                  : newsItems.slice(0, NEWS_PAGE_SIZE)
+                ).map((item) => (
                   <li key={item.id} className="py-3.5">
                     <a
                       href={item.url}

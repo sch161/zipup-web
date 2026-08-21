@@ -63,6 +63,14 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary)
 }
 
+async function unwrapFunctionsError(error: NonNullable<Awaited<ReturnType<typeof supabase.functions.invoke>>['error']>): Promise<Error> {
+  if (error instanceof FunctionsHttpError) {
+    const parsed = await error.context.json().catch(() => null)
+    return new Error(parsed?.error ?? error.message)
+  }
+  return new Error(error.message)
+}
+
 /** Calls the `analyze-contract` Supabase Edge Function, which holds the Gemini API key server-side. */
 export async function analyzeContract(input: AnalyzeContractInput): Promise<AnalysisResult> {
   const body: Record<string, unknown> = {
@@ -78,13 +86,7 @@ export async function analyzeContract(input: AnalyzeContractInput): Promise<Anal
 
   const { data, error } = await supabase.functions.invoke<AnalysisResult>('analyze-contract', { body })
 
-  if (error) {
-    if (error instanceof FunctionsHttpError) {
-      const parsed = await error.context.json().catch(() => null)
-      throw new Error(parsed?.error ?? error.message)
-    }
-    throw new Error(error.message)
-  }
+  if (error) throw await unwrapFunctionsError(error)
 
   if (!data) {
     throw new Error('AI 분석 결과를 받지 못했습니다.')
