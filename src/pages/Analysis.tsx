@@ -69,8 +69,12 @@ export default function Analysis() {
 
   useEffect(() => {
     if (!navState) return
+    // landlordName(임대인 실명)은 세션스토리지에 남기지 않는다 — 계약서에서 OCR로 읽은 개인정보라,
+    // 방금 분석을 마치고 넘어온 화면(이 state)에서만 보여주고 새로고침/재방문 시엔 뺀다.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { landlordName, ...toStore } = navState
     try {
-      sessionStorage.setItem(LAST_ANALYSIS_KEY, JSON.stringify(navState))
+      sessionStorage.setItem(LAST_ANALYSIS_KEY, JSON.stringify(toStore))
     } catch {
       // storage full or unavailable — the page still works, it just won't survive navigation
     }
@@ -110,7 +114,11 @@ export default function Analysis() {
             </p>
             <p className="mt-1 text-xs leading-snug text-text-dark">
               <BrokenText
-                text={`계약서에서 확인된 임대인 "${result.landlordName}"과(와) 이름이 유사한 인물이 HUG(주택도시보증공사) 상습채무불이행자 명단에 있어요. 동명이인일 수 있으니, 계약 전 반드시 신분증과 등기부등본상 소유자 정보를 직접 대조해 확인하세요.`}
+                text={
+                  result.landlordName
+                    ? `계약서에서 확인된 임대인 "${result.landlordName}"과(와) 이름이 유사한 인물이 HUG(주택도시보증공사) 상습채무불이행자 명단에 있어요. 동명이인일 수 있으니, 계약 전 반드시 신분증과 등기부등본상 소유자 정보를 직접 대조해 확인하세요.`
+                    : '계약서에서 확인된 임대인 이름과 유사한 인물이 HUG(주택도시보증공사) 상습채무불이행자 명단에 있어요. 동명이인일 수 있으니, 계약 전 반드시 신분증과 등기부등본상 소유자 정보를 직접 대조해 확인하세요.'
+                }
               />
             </p>
             <ul className="mt-1.5 flex flex-col gap-0.5">
