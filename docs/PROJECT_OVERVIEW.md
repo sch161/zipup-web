@@ -1,6 +1,6 @@
 # ZIPUP 프로젝트 기술 문서
 
-> 이 문서는 2026-08-18 기준 코드베이스(`src/`, `supabase/functions/`, `supabase/migrations/`, `scripts/`, `.github/workflows/`)를 실제로 읽고 작성했습니다. 계획만 있고 구현되지 않은 부분은 **[미구현]**으로, 구현은 됐지만 한계가 있는 부분은 솔직하게 표기했습니다. 멘토링에서 그대로 읽으면서 설명할 수 있도록 코드 인용보다 흐름 설명 위주로 작성했습니다.
+> 이 문서는 최초 2026-08-18 기준 코드베이스(`src/`, `supabase/functions/`, `supabase/migrations/`, `scripts/`, `.github/workflows/`)를 실제로 읽고 작성했고, 2026-08-21 변경분(계약서 PII 마스킹 파이프라인, 계약서 위험도 코드 계산 전환, 배치 상태판 관리자 전용화, 계정 전환 시 세션 데이터 정리)을 반영해 2026-08-22 갱신했습니다. 계획만 있고 구현되지 않은 부분은 **[미구현]**으로, 구현은 됐지만 한계가 있는 부분은 솔직하게 표기했습니다. 멘토링에서 그대로 읽으면서 설명할 수 있도록 코드 인용보다 흐름 설명 위주로 작성했습니다. 계약서 PII 마스킹의 단계별 상세 흐름(어떤 데이터가 언제 외부로 나가는지 등)은 이 문서에서 중복 서술하지 않고 [`docs/PRIVACY_FLOW.md`](PRIVACY_FLOW.md)를 참고하도록 링크로 대신합니다.
 
 ---
 
@@ -11,7 +11,7 @@
 - **프론트엔드**: Vite + React 18 + TypeScript + Tailwind CSS. SPA(React Router)로 동작하며 별도 SSR/BFF 서버 없음. Vercel에 정적 배포(`vercel.json` 존재).
 - **백엔드**: Supabase Edge Functions(Deno). 사용자 요청 시 실행되는 함수 2개(`analyze-contract`, `analyze-chat`, `delete-account`)와 pg_cron이 주기적으로 호출하는 배치 함수 3개(`fetch-market-data`, `fetch-region-buzz`, `sync-news`)로 구성.
 - **데이터베이스**: Supabase Postgres. 8개 테이블 + Row Level Security(RLS) + `pg_trgm` 확장(트라이그램 유사도 검색) + `pg_cron`/`pg_net`(스케줄링·HTTP 호출) + Supabase Vault(시크릿 보관).
-- **외부 API**: Google Gemini API(계약서/대화 분석), 네이버 뉴스 검색 API(뉴스·언급빈도), 국토교통부 실거래가 API(전세가율 산출용 원자료), 카카오맵 SDK(지도 렌더링), Google/Kakao OAuth(소셜 로그인).
+- **외부 API**: Google Gemini API(계약서/대화 분석), 네이버클라우드 CLOVA OCR(계약서 이미지의 개인정보 위치 검출 → 마스킹, 2026-08-21 추가), 네이버 뉴스 검색 API(뉴스·언급빈도), 국토교통부 실거래가 API(전세가율 산출용 원자료), 카카오맵 SDK(지도 렌더링), Google/Kakao OAuth(소셜 로그인).
 - **오프-플랫폼 자동화**: GitHub Actions가 주 1회 Node 스크립트(`scripts/sync-hug-defaulters.mjs`)를 실행해 HUG 명단을 크롤링 — Supabase 생태계 밖에서 도는 유일한 자동화.
 
 ### 1-2. 텍스트 다이어그램
@@ -22,13 +22,18 @@
    ├─ VITE_SUPABASE_ANON_KEY (anon key, RLS로 권한 제한) ──▶  Postgres (analyses, gaslighting_checks, region_stats, news 등 SELECT)
    ├─ supabase.functions.invoke('analyze-contract') ─┐
    ├─ supabase.functions.invoke('analyze-chat')      ─┼─▶  [Supabase Edge Functions, Deno]
-   ├─ supabase.functions.invoke('delete-account')    ─┘        │  GEMINI_API_KEY, NAVER_*, MOLIT_API_KEY
-   └─ VITE_KAKAO_MAP_KEY ──▶ 카카오맵 SDK(dapi.kakao.com, 브라우저에서 직접 로드)  │  (Supabase Secrets, 서버 전용)
+   ├─ supabase.functions.invoke('delete-account')    ─┘        │  GEMINI_API_KEY, NAVER_*, MOLIT_API_KEY,
+   └─ VITE_KAKAO_MAP_KEY ──▶ 카카오맵 SDK(dapi.kakao.com, 브라우저에서 직접 로드)  │  CLOVA_OCR_INVOKE_URL/SECRET_KEY
+                                                                 │  (Supabase Secrets, 서버 전용)
                                                                  ▼
-                                    Google Gemini API / 네이버 뉴스 API / 국토교통부 실거래가 API
+                    Google Gemini API / CLOVA OCR API / 네이버 뉴스 API / 국토교통부 실거래가 API
                                                                  │
                                                                  ▼
                                     service_role 클라이언트로 Postgres에 결과 저장 (RLS 우회)
+
+   ※ analyze-contract는 이미지를 CLOVA OCR로 먼저 분석해 개인정보 위치를 찾아 검은 사각형으로
+     마스킹한 뒤에만 Gemini로 보낸다(2026-08-21 추가). 이 단계별 데이터 흐름은 이 문서에서
+     반복 서술하지 않고 PRIVACY_FLOW.md에 근거 라인 번호와 함께 정리돼 있다.
 
 [pg_cron, Postgres 내부 스케줄러]
    ├─ fetch-market-data-batch (20분 간격, 1일 9회) ─▶ net.http_post(x-cron-secret) ─▶ fetch-market-data 함수 ─▶ MOLIT API ─▶ region_stats 갱신
@@ -44,7 +49,7 @@
 
 **API 키를 서버(Edge Function)에만 두는 이유**는 브라우저 번들에 포함되는 모든 `VITE_` 접두사 환경변수는 최종 사용자에게 그대로 노출되기 때문입니다. Gemini/네이버/국토부 키가 프론트에 있으면 누구나 개발자 도구로 추출해 무단 사용·과금 유발이 가능합니다. 그래서:
 
-- `GEMINI_API_KEY`, `NAVER_CLIENT_ID/SECRET`, `MOLIT_API_KEY`는 **Supabase Secrets**(Edge Function 런타임에만 주입되는 환경변수)에 두고, 프론트는 이 값들을 절대 참조하지 않습니다. 대신 프론트는 `supabase.functions.invoke(...)`로 Edge Function을 호출하고, 실제 외부 API 호출은 서버 쪽 코드가 대행합니다.
+- `GEMINI_API_KEY`, `NAVER_CLIENT_ID/SECRET`, `MOLIT_API_KEY`, `CLOVA_OCR_INVOKE_URL`/`CLOVA_OCR_SECRET_KEY`는 **Supabase Secrets**(Edge Function 런타임에만 주입되는 환경변수)에 두고, 프론트는 이 값들을 절대 참조하지 않습니다. 대신 프론트는 `supabase.functions.invoke(...)`로 Edge Function을 호출하고, 실제 외부 API 호출은 서버 쪽 코드가 대행합니다.
 - `SUPABASE_SERVICE_ROLE_KEY`(RLS를 완전히 우회하는 최고 권한 키)는 GitHub Actions Secrets에만 존재하고, 리포지토리 코드 어디에도 값 자체가 없습니다. 이 키가 필요한 이유는 계약서/대화 분석 결과를 `analyses`/`gaslighting_checks`에 쓸 때, 그리고 HUG 명단을 `hug_defaulters`에 upsert할 때 RLS 정책(본인 데이터만 SELECT 가능)을 우회해 시스템이 대신 써야 하기 때문입니다.
 - 반대로 **카카오맵 JavaScript 키**(`VITE_KAKAO_MAP_KEY`)는 프론트 환경변수로 관리합니다. 애초에 브라우저에서 직접 로드되는 것을 전제로 발급되는 키이고, 카카오 개발자 콘솔에서 도메인 화이트리스트로 오남용을 막는 구조이기 때문에 서버에 숨길 이유가 없습니다.
 - 사용자 요청형 함수(`analyze-contract`, `analyze-chat`)는 `supabase/config.toml`에서 `verify_jwt = false`로 설정되어 있습니다. 이유는 프로젝트가 신규 형식의 publishable anon key(`sb_publishable_...`)를 쓰는데, 이는 JWT가 아니라서 비로그인 상태에서는 Authorization 헤더 자체가 안 실리기 때문입니다(`verify_jwt=true`면 비로그인 사용자의 모든 요청이 거부됨). 대신 함수 내부에서 `Authorization` 헤더가 있으면 파싱해 `user_id`를 선택적으로 채우고, 없으면 `user_id`를 `null`로 저장합니다 — 즉 **비로그인 상태에서도 분석 자체는 가능하지만 이력이 남지 않습니다.**
@@ -54,7 +59,7 @@
 
 ## 2. 화면(페이지)별 기능 목록
 
-`src/pages/` 기준 실제 존재하는 페이지는 총 9개입니다. `MainLayout`(TopNav+BottomNav)으로 감싸이는 페이지는 `/home`, `/psych-guard`, `/map`, `/profile` 4개뿐이고, 나머지(`/`, `/login`, `/signup`, `/analysis`, `/psych-guard/:id`, `/privacy`)는 레이아웃 밖에서 독립적으로 렌더링됩니다. 특히 `/analysis`는 성격상 "앱의 핵심 화면"인데도 `MainLayout` 밖에 있어서, `Analysis.tsx`가 자체적으로 `<TopNav variant="app"/>`를 다시 렌더링하고 `BottomNav`는 아예 없습니다 — 레이아웃 일관성 관점의 사소한 허점입니다.
+`src/pages/` 기준 실제 존재하는 페이지는 총 10개입니다. `MainLayout`(TopNav+BottomNav)으로 감싸이는 페이지는 `/home`, `/psych-guard`, `/map`, `/profile` 4개뿐이고, 나머지(`/`, `/login`, `/signup`, `/analysis`, `/psych-guard/:id`, `/privacy`, `/scoring`)는 레이아웃 밖에서 독립적으로 렌더링됩니다. 특히 `/analysis`는 성격상 "앱의 핵심 화면"인데도 `MainLayout` 밖에 있어서, `Analysis.tsx`가 자체적으로 `<TopNav variant="app"/>`를 다시 렌더링하고 `BottomNav`는 아예 없습니다 — 레이아웃 일관성 관점의 사소한 허점입니다.
 
 | 라우트 | 파일 | 기능 | 데이터 소스 | 호출 함수 |
 |---|---|---|---|---|
@@ -65,8 +70,9 @@
 | `/psych-guard` | `Cure.tsx` | 심리 가드(가스라이팅 탐지) 채팅 UI | `sessionStorage`(`zipup:psychGuardMessages`) | `analyzeChat()` → Edge Function `analyze-chat` |
 | `/psych-guard/:id` | `GaslightingDetail.tsx` | 개별 대화 분석 결과 상세 | `gaslighting_checks` 테이블 | `fetchGaslightingCheckById(id)` |
 | `/map` | `SignalMap.tsx` | 전국 시/군/구 위험도 지도 | `region_stats` 테이블 + `public/data/skorea-municipalities.json` | `fetchRegionStats()`, 카카오맵 SDK |
-| `/profile` | `Profile.tsx` | 프로필, 분석 이력, 계정 관리, 배치 작업 상태판 | `analyses`, `gaslighting_checks`, `batch_job_status` 테이블 | `fetchAnalysisHistory()`, `fetchGaslightingHistory()`, `deleteAccount()`, `fetchBatchJobStatus()` |
+| `/profile` | `Profile.tsx` | 프로필, 분석 이력, 계정 관리, (관리자만 보이는) 배치 작업 상태판 | `analyses`, `gaslighting_checks`, `batch_job_status` 테이블 | `fetchAnalysisHistory()`, `fetchGaslightingHistory()`, `deleteAccount()`, `fetchBatchJobStatus()` |
 | `/privacy` | `Privacy.tsx` | 개인정보 처리방침 안내 | 없음(정적 텍스트) | 없음 |
+| `/scoring` | `ScoringGuide.tsx` (2026-08-21 추가) | 계약서 종합 점수·안심맵 지역 위험도 산정 기준(가중치·등급 경계) 안내 | 없음(정적 텍스트 — `_shared/contractScore.ts`/`_shared/riskScore.ts`의 값을 사람이 수동으로 옮겨 적어 코드 주석으로 "값을 맞춰야 한다"고 명시) | 없음 |
 
 **인증 가드**: 라우트 레벨의 접근 제어 컴포넌트는 존재하지 않습니다. 로그인 여부와 무관하게 `Home`/`Cure`/`SignalMap`/`Analysis`는 렌더링되고, 실제로 로그아웃 상태에서 리다이렉트를 거는 화면은 **`Profile.tsx`가 유일**합니다(`useEffect`에서 `supabase.auth.getUser()` 확인 후 `!user`면 `/login`으로 이동).
 
@@ -78,17 +84,19 @@
 
 **① 사용자 입력** — `Home.tsx`의 업로드 카드에서 주소(필수), 보증금(필수), 건물 유형(선택)을 입력하고, 계약서/등기부등본 이미지 또는 PDF를 파일 선택 또는 드래그 앤 드롭으로 첨부합니다. 화면에는 "최대 20MB, HWP는 PDF로 변환" 안내 문구가 있지만 **실제 파일 크기·타입 검증 코드는 존재하지 않습니다** — 안내는 텍스트일 뿐이고 무엇을 올려도 그대로 전송됩니다.
 
-**② 처리 — 프론트 인코딩** — `analyzeContract()`(`src/lib/analyzeContract.ts`)가 파일을 `arrayBuffer()`로 읽어 바이트 단위로 순회하며 `btoa()`로 base64 문자열을 만듭니다(청크 분할 없이 메인 스레드에서 동기 실행 — 큰 파일일수록 UI가 잠깐 멈출 수 있음). 이후 `{ address, deposit, buildingType, fileBase64, fileMimeType }`을 body로 `supabase.functions.invoke('analyze-contract')`를 호출합니다. 업로드는 별도 Storage 경유 없이 **파일 전체를 JSON 요청 본문에 base64로 실어 보내는 방식**입니다.
+**② 처리 — PDF 변환 및 프론트 인코딩** — PDF를 선택한 경우 `convertPdfToImage()`(`src/lib/pdfToImage.ts`, 2026-08-21 추가)가 pdf.js로 각 페이지를 캔버스에 렌더링해 세로로 이어붙인 뒤 PNG `Blob` 하나로 변환합니다. 이 변환은 **전부 브라우저 안에서 끝나고 서버는 PDF 자체를 받지 않습니다**(Edge Function은 `image/jpeg`·`image/png`가 아니면 즉시 400). 이후 `analyzeContract()`(`src/lib/analyzeContract.ts`)가 (변환된 경우 이미지) 파일을 `arrayBuffer()`로 읽어 바이트 단위로 순회하며 `btoa()`로 base64 문자열을 만듭니다(청크 분할 없이 메인 스레드에서 동기 실행 — 큰 파일일수록 UI가 잠깐 멈출 수 있음). 이후 `{ address, deposit, buildingType, fileBase64, fileMimeType }`을 body로 `supabase.functions.invoke('analyze-contract')`를 호출합니다. 업로드는 별도 Storage 경유 없이 **파일 전체를 JSON 요청 본문에 base64로 실어 보내는 방식**입니다.
 
 **③ 처리 — Edge Function `analyze-contract`**
 1. `address` 또는 `fileBase64` 둘 중 하나는 필수(둘 다 없으면 400). `GEMINI_API_KEY` 미설정 시 500.
-2. **"RAG" 단계** — `contract_risk_patterns`(전세사기·독소조항 실제 피해 패턴 DB, 약 20건)를 조건 없이 `SELECT *`로 **전부** 가져와 프롬프트에 통째로 삽입합니다. 코드 주석에 "테이블이 20건 내외의 작은 지식베이스라 키워드 검색 없이 전부 포함시킨다(테이블이 커지면 검색 기반으로 바꿀 것)"이라고 명시되어 있습니다 — 즉 **실제로는 유사도 검색이 아니라 전체 덤프이며, 벡터 임베딩·전문검색(tsvector) 등은 코드에서 전혀 쓰이지 않습니다.** (아래 7장에서 스키마 이력 문제와 함께 다시 설명)
-3. Gemini API(`gemini-flash-latest`, 환경변수 `GEMINI_MODEL`로 재정의 가능)를 멀티모달로 호출합니다. 이미지/PDF는 `inline_data`로 프롬프트에 직접 첨부하고(별도 OCR 단계 없음), `responseSchema`로 JSON 스키마를 강제해 구조화된 응답을 받습니다. 429(과부하)/503(할당량 초과) 응답 시 `[1000ms, 3000ms]` 지연으로 최대 2회 재시도(총 3회 시도), 요청당 타임아웃 28초.
-4. **위험도 점수는 서버가 계산하지 않고 Gemini가 직접 산출**합니다. 프롬프트는 모델에게 "패턴 DB의 대항력 악용·신탁 부동산·바지사장 넘기기·과도한 원상복구 등이 발견되면 `hugLandlordCheck.isBlacklisted`를 true로 설정하고 `overallScore`를 무조건 40점 미만(danger)으로 낮추라"는 **규칙을 텍스트로 지시**할 뿐이며, 서버 코드는 Gemini가 반환한 JSON을 그대로 파싱해 사용합니다(재검증·재계산 없음).
-5. Gemini가 계약서에서 추출한 `landlordName`이 있으면, 별도로 Postgres 함수 `search_hug_defaulters_by_name(query_name, min_similarity=0.4)`를 호출합니다 — `pg_trgm`의 `similarity()` 함수로 이름 컬럼만 비교하는 트라이그램 유사도 검색이며, 유사도 0.4 이상인 상위 5건을 반환합니다. 이 결과는 `hugDefaulterMatch`라는 **별도 필드**로 응답에 붙습니다 — Gemini가 패턴만 보고 "추정"한 `hugLandlordCheck`와는 명확히 구분되는, **공식 명단 대조에 기반한 사실 확인**입니다.
-6. 최종적으로 `analyses` 테이블에 service_role 클라이언트로 insert합니다(주소/보증금/건물유형/점수/등급/카테고리/조항/추천조치/코멘트). 저장이 실패해도 사용자에게 보여줄 분석 결과 자체는 정상 반환됩니다(이력 저장 실패가 사용자 경험을 막지 않도록 설계).
+2. **개인정보 마스킹 (2026-08-21 추가)** — 첨부 파일이 있으면 Gemini를 호출하기 전에 CLOVA OCR로 텍스트·좌표를 읽어 주민등록번호·계좌번호·전화번호·임대인/임차인 성명·당사자 개인 주소를 찾아 검은 사각형으로 가리고, **마스킹된 이미지로 원본을 교체한 뒤에만** Gemini에 보냅니다. 이미지 정규화·OCR·마스킹 중 어느 단계든 실패하면 즉시 422 에러로 분석을 중단합니다(fail-safe — 원본이나 부분 마스킹본이 Gemini로 새어나가는 경우가 없도록). 임대인 성명은 OCR로 읽은 값을 서버 메모리에만 갖고 있다가 5번 단계(HUG 명단 조회)에만 쓰고 Gemini 요청에는 포함되지 않습니다. 이 파이프라인의 단계별 상세(정규식·라벨 매칭 로직, 각 단계에서 무엇이 외부로 나가는지, 발견·수정된 개인정보 문제 2건 등)는 [`docs/PRIVACY_FLOW.md`](../docs/PRIVACY_FLOW.md)에 근거 라인과 함께 정리돼 있습니다.
+3. **"RAG" 단계** — `contract_risk_patterns`(전세사기·독소조항 실제 피해 패턴 DB, 약 20건)를 조건 없이 `SELECT *`로 **전부** 가져와 프롬프트에 통째로 삽입합니다. 코드 주석에 "테이블이 20건 내외의 작은 지식베이스라 키워드 검색 없이 전부 포함시킨다(테이블이 커지면 검색 기반으로 바꿀 것)"이라고 명시되어 있습니다 — 즉 **실제로는 유사도 검색이 아니라 전체 덤프이며, 벡터 임베딩·전문검색(tsvector) 등은 코드에서 전혀 쓰이지 않습니다.** (아래 7장에서 스키마 이력 문제와 함께 다시 설명)
+4. Gemini API(`gemini-flash-latest`, 환경변수 `GEMINI_MODEL`로 재정의 가능)를 멀티모달로 호출합니다. 마스킹된 이미지는 `inline_data`로 프롬프트에 직접 첨부하고, `responseSchema`로 JSON 스키마를 강제해 구조화된 응답을 받습니다. 이때 Gemini에게 요구하는 카테고리 점수는 **권리관계·특약사항·건물상태 3개뿐**입니다(전세가율은 서버가 별도로 계산 — 5번 참고). 429(과부하)/503(할당량 초과) 응답 시 `[1000ms, 3000ms]` 지연으로 최대 2회 재시도(총 3회 시도), 요청당 타임아웃 28초. 이 Gemini 호출과 5번의 전세가율 계산은 서로 무관하므로 `Promise.all`로 병렬 실행합니다.
+5. **전세가율은 서버가 국토부 실거래가로 직접 계산합니다(2026-08-21 추가)** — 계약서 주소를 Postgres 함수 `match_region_by_address(input_address)`에 넘겨 `region_stats`에서 가장 구체적으로 일치하는 지역을 찾고, 그 지역의 평균 매매가(건물 유형이 아파트가 아니면 연립다세대 시세 우선)와 보증금을 비교합니다. 주소가 지역과 매칭되지 않거나 그 지역의 최근 실거래가가 없으면 이 카테고리는 `score: null`("데이터 없음")이 되어 종합 점수 계산에서 제외됩니다.
+6. **종합 점수(`overallScore`)는 이제 서버가 가중평균으로 계산합니다**(`_shared/contractScore.ts`의 `calculateOverallScore`, 2026-08-21 도입 — 이전에는 Gemini가 직접 산출했음. 상세 공식은 6-2 참고). Gemini의 3개 카테고리 점수 + 서버가 계산한 전세가율 카테고리를 권리관계 35% · 특약사항 30% · 전세가율 25% · 건물상태 10%로 가중평균하고, `hugLandlordCheck.isBlacklisted`가 true면(대항력 악용·신탁 부동산 등 패턴 DB와 일치) 계산 결과가 낮게 나와도 최소 61점(위험 등급 하한)으로 끌어올립니다. 카테고리 자체의 점수(권리관계/특약사항/건물상태)는 여전히 Gemini의 판단이라 비결정적이지만, **그 점수들을 종합 점수로 합치는 방식은 코드로 고정돼 있어 재현 가능**합니다.
+7. Gemini가 계약서에서 추출하지 못하는(마스킹돼 있으므로) `landlordName`은 OCR로 직접 읽은 값을 서버가 응답에 주입합니다. 이 이름이 있으면 별도로 Postgres 함수 `search_hug_defaulters_by_name(query_name, min_similarity=0.4)`를 호출합니다 — `pg_trgm`의 `similarity()` 함수로 이름 컬럼만 비교하는 트라이그램 유사도 검색이며, 유사도 0.4 이상인 상위 5건을 반환합니다. 이 결과는 `hugDefaulterMatch`라는 **별도 필드**로 응답에 붙습니다 — Gemini가 패턴만 보고 "추정"한 `hugLandlordCheck`와는 명확히 구분되는, **공식 명단 대조에 기반한 사실 확인**입니다.
+8. 최종적으로 `analyses` 테이블에 service_role 클라이언트로 insert합니다(주소/보증금/건물유형/점수/등급/`score_direction`/카테고리/조항/추천조치/코멘트 — 이미지·OCR 원문·임대인 성명·HUG 대조 결과는 저장하지 않음). 저장이 실패해도 사용자에게 보여줄 분석 결과 자체는 정상 반환됩니다(이력 저장 실패가 사용자 경험을 막지 않도록 설계).
 
-**④ 결과** — `Analysis.tsx`가 응답을 `sessionStorage`에 캐싱하며 렌더링합니다. HUG 공식 명단과 일치하면 빨간 배너("HUG 상습 채무불이행자 명단에서 발견"), AI 패턴 추정만 있으면 주황 배너("AI 위험 패턴 감지")로 시각적으로 구분해 보여줍니다. `RiskGauge`로 종합 점수, 카테고리별(권리관계·특약사항·전세가율·건물상태) 막대, 발견된 유의 조항, AI 추천 조치를 표시합니다.
+**④ 결과** — `Analysis.tsx`가 응답을 `sessionStorage`에 캐싱하며 렌더링합니다(단, `landlordName`은 캐싱 직전에 제외 — 자세한 경위는 PRIVACY_FLOW.md 3.2 참고). HUG 공식 명단과 일치하면 빨간 배너("HUG 상습 채무불이행자 명단에서 발견"), AI 패턴 추정만 있으면 주황 배너("AI 위험 패턴 감지")로 시각적으로 구분해 보여줍니다. `RiskGauge`로 종합 점수, 카테고리별(권리관계·특약사항·전세가율·건물상태) 막대, 발견된 유의 조항, AI 추천 조치를 표시합니다. 점수는 "높을수록 위험"이며(안심 시그널 맵과 동일 방향), `scoreDirection`이 `'legacy_low_is_risky'`(2026-08-21 이전 이력)이면 예전 채점 기준이었다는 안내 문구로 바뀝니다.
 
 ### 3-2. 심리 가드 (가스라이팅 탐지)
 
@@ -133,7 +141,9 @@
 
 **조회(프론트)** — `src/lib/jobStatus.ts`의 `fetchBatchJobStatus()`가 `batch_job_status` 전체를 조회하고, `BatchJobStatusCard.tsx`가 작업마다 "마지막 갱신: N시간/일 전"과 상태 배지(✅ 정상 / ⚠️ 지연 / 🔴 중단 의심 / ❔ 기록 없음)를 보여줍니다. 상태 판정은 작업별로 하드코딩된 임계값(예: `sync-news`는 12시간 지연·24시간 중단 의심, 하루 한 번만 도는 `fetch-market-data`/`fetch-region-buzz`는 30시간·72시간, 주 1회인 `sync-hug-defaulters`는 9일·14일)을 `last_success_at`과 비교해서 프론트에서 계산합니다 — DB에 저장된 값이 아니라 컴포넌트 상수입니다.
 
-**한계**: 이메일/슬랙 등 능동적 알림은 없고, 사용자가 마이페이지를 직접 열어야만 보입니다(그래서 완전한 "감지"가 아니라 "눈으로 확인하면 바로 알 수 있게 만든 것"에 가깝습니다). 또한 함수가 배포조차 안 되거나 Deno 런타임 자체가 기동에 실패하는 등 코드가 전혀 실행되지 못하는 극단적 장애는 여전히 기록되지 않습니다(이번 sync-news 401 사고는 코드가 실행되긴 했으니 이 방식으로 잡혔을 것이지만, 완전히 다른 종류의 장애까지 보장하진 않습니다). RLS는 `authenticated`로 제한해 로그인 사용자만 볼 수 있게 했습니다.
+**접근 제어(2026-08-21, 관리자 전용으로 강화)** — 원래 RLS는 `authenticated`(로그인만 하면 누구나)로 제한돼 있었는데, 이 상태판은 일반 사용자에게 노출할 이유가 없는 운영용 정보라 관리자 계정에만 조회를 허용하도록 좁혔습니다(`20260821010000_restrict_batch_job_status_to_admin.sql`). 이 프로젝트 규모(팀 4명)에서 `profiles` 테이블 + `role` 컬럼을 새로 만들기보다 단순하다는 이유로, 관리자 이메일(`s2534@e-mirim.hs.kr`)을 RLS 정책 SQL에 직접 넣는 방식을 택했습니다 — 그러면서도 DB 레벨(RLS)에서 실제로 강제된다는 요구사항은 만족합니다. 관리자가 늘어나면 `profiles.is_admin` 컬럼 + RLS로 옮기는 게 다음 단계라고 마이그레이션 주석에 남아 있습니다. `BatchJobStatusCard.tsx`는 이에 맞춰, 조회 결과가 빈 배열이면(비관리자는 RLS가 조용히 걸러내 빈 배열을 받음) 카드 자체를 렌더링하지 않습니다 — "로딩 중" 상태조차 비관리자에게 보이지 않도록 했습니다.
+
+**한계**: 이메일/슬랙 등 능동적 알림은 없고, 관리자가 마이페이지를 직접 열어야만 보입니다(그래서 완전한 "감지"가 아니라 "눈으로 확인하면 바로 알 수 있게 만든 것"에 가깝습니다). 또한 함수가 배포조차 안 되거나 Deno 런타임 자체가 기동에 실패하는 등 코드가 전혀 실행되지 못하는 극단적 장애는 여전히 기록되지 않습니다(이번 sync-news 401 사고는 코드가 실행되긴 했으니 이 방식으로 잡혔을 것이지만, 완전히 다른 종류의 장애까지 보장하진 않습니다).
 
 ### 3-6. 마이페이지 — 분석 이력 조회 방식
 
@@ -143,7 +153,13 @@
 
 두 쿼리 모두 **클라이언트 코드에서 `.eq('user_id', userId)`로 한 번 필터링하고, 서버의 RLS 정책이 다시 한 번 필터링하는 이중 방어 구조**입니다(위에서 언급한 `GaslightingDetail.tsx`의 단건 조회와는 다른 패턴). 탭 전환(계약서 스캔 / 마음 상담)은 이미 받아온 두 배열을 화면에서만 바꿔 보여주는 클라이언트 사이드 전환이며, "전체보기" 버튼도 처음부터 가져온 배열을 5개씩 자르는 `.slice(0, 5)` 토글일 뿐, 실제로 더 가져오는 재조회는 일어나지 않습니다.
 
-계약서 이력 항목을 클릭하면 `toAnalysisResult()`로 DB 행을 `AnalysisResult` 형태로 재구성해 `/analysis`로 이동합니다. 이 재구성 과정에서 `landlordName`/`hugDefaulterMatch`/`hugLandlordCheck` 필드는 애초에 이력 조회 쿼리(`ANALYSIS_COLUMNS`)에 포함되지 않아 **소실됩니다** — 즉 실시간 분석 직후에는 보였던 HUG 명단 대조 배너가, 나중에 마이페이지에서 같은 분석을 다시 열어보면 나타나지 않습니다(7장 한계에서 다시 언급).
+계약서 이력 항목을 클릭하면 `toAnalysisResult()`로 DB 행을 `AnalysisResult` 형태로 재구성해 `/analysis`로 이동합니다. 이 재구성 과정에서 `landlordName`/`hugDefaulterMatch`/`hugLandlordCheck` 필드는 애초에 이력 조회 쿼리(`ANALYSIS_COLUMNS`)에 포함되지 않아 **소실됩니다** — 즉 실시간 분석 직후에는 보였던 HUG 명단 대조 배너가, 나중에 마이페이지에서 같은 분석을 다시 열어보면 나타나지 않습니다(7장 한계에서 다시 언급). `ANALYSIS_COLUMNS`에는 `score_direction`은 포함돼 있어(2026-08-21 추가), 예전 채점 기준으로 계산된 과거 이력을 다시 열어도 `toAnalysisResult()`가 `score_direction ?? 'legacy_low_is_risky'`로 올바르게 안내 문구를 분기시킵니다 — 다만 `scoreBreakdown`(카테고리별 가중치 반영 내역)은 이력에 저장되지 않으므로 과거 이력을 다시 열면 항목별 점수/등급은 보여도 "왜 이 종합 점수가 나왔는지"의 가중치 분해는 볼 수 없습니다.
+
+### 3-7. 계정 전환 시 세션 데이터 정리 (2026-08-21 추가)
+
+`src/lib/sessionCleanup.ts`의 `registerSessionCleanup()`이 `src/main.tsx`에서 앱 렌더링 전에 한 번 등록됩니다. `supabase.auth.onAuthStateChange`를 구독해 로그인한 사람이 "바뀌었는지"(세션 소유자 id, 비로그인은 `'anon'`)를 `sessionStorage`의 `zipup:sessionOwner` 키와 비교하고, 바뀐 경우에만 앱이 직접 쓰는 `sessionStorage` 키(`zipup:lastAnalysis`, `zipup:psychGuardMessages`)를 지웁니다.
+
+이 기능이 추가된 이유는 같은 탭에서 A가 로그아웃하고 B가 로그인하면(또는 비로그인 상태로 분석한 뒤 로그인하면) `sessionStorage`가 탭 단위로 유지되는 특성상 B의 화면에 A의 계약서 분석 결과·마음 상담 내용이 그대로 남아 보이던 문제 때문입니다 — 공용 PC에서 특히 위험한 개인정보 노출 경로였습니다. 소유자가 "바뀐" 경우에만 지우므로 같은 사용자의 새로고침이나 토큰 자동 갱신으로는 화면이 사라지지 않습니다. 발견 경위와 검증은 [`docs/PRIVACY_FLOW.md`](../docs/PRIVACY_FLOW.md)에 기록돼 있습니다.
 
 ---
 
@@ -186,7 +202,7 @@
 
 | 테이블 | 역할 | 주요 컬럼 | 쓰는 주체 | 읽는 주체 | RLS |
 |---|---|---|---|---|---|
-| `analyses` | 계약서 스캔 결과 이력 | `user_id`(FK, cascade delete), `address`, `deposit`, `building_type`, `overall_score`, `risk_level`(danger/warning/success), `categories`/`detected_clauses`/`recommended_actions`(jsonb), `ai_comment` | `analyze-contract` 함수(service_role) | `Profile.tsx`(`fetchAnalysisHistory`, 본인 것만) | 활성. `authenticated`가 `auth.uid()=user_id`인 행만 SELECT 가능. INSERT 정책 없음(service_role은 RLS 우회) |
+| `analyses` | 계약서 스캔 결과 이력 | `user_id`(FK, cascade delete), `address`, `deposit`, `building_type`, `overall_score`, `risk_level`(danger/warning/success), `score_direction`(`high_is_risky`/`legacy_low_is_risky`, not null, 2026-08-21 추가 — 아래 참고), `categories`/`detected_clauses`/`recommended_actions`(jsonb), `ai_comment` | `analyze-contract` 함수(service_role) | `Profile.tsx`(`fetchAnalysisHistory`, 본인 것만) | 활성. `authenticated`가 `auth.uid()=user_id`인 행만 SELECT 가능. INSERT 정책 없음(service_role은 RLS 우회) |
 | `gaslighting_checks` | 마음 상담(가스라이팅) 분석 이력 | `user_id`(FK, cascade delete), `input_text`, `risk_level`(위험/주의/안전), `confidence`(0~100), `patterns`(jsonb), `suggested_response` | `analyze-chat` 함수(service_role) | `Profile.tsx`, `GaslightingDetail.tsx`(id로 단건) | 활성. `authenticated`가 `auth.uid()=user_id`인 행만 SELECT 가능 |
 | `news` | 전세사기 관련 뉴스 캐시 | `title`, `url`(unique), `media`, `published_at` | `sync-news` 함수(service_role) | `Home.tsx`(`fetchLatestNews`) | 활성. `anon`/`authenticated` 모두 전체 SELECT 가능(공개 데이터) |
 | `region_stats` | 지역별 위험도 맵 데이터 | `region_code`(unique, LAWD), `region_name`, `avg_sale_price`/`avg_jeonse_price`/`jeonse_ratio`(아파트), `villa_avg_sale_price`/`villa_avg_jeonse_price`/`villa_jeonse_ratio`, `news_mentions`, `hug_defaulter_count`, `risk_score`, `risk_level`(위험/주의/안전) | `fetch-market-data`, `fetch-region-buzz` 함수(service_role) | `SignalMap.tsx`(`fetchRegionStats`, 전체) | 활성. `anon`/`authenticated` 모두 전체 SELECT 가능 |
@@ -194,23 +210,26 @@
 | `contract_risk_patterns` | 계약서 분석용 위험 패턴 지식베이스 | (아래 스키마 이력 참고) | 수동 시딩 | `analyze-contract`(전체 SELECT) | 활성. `anon`/`authenticated`는 SELECT만 가능, INSERT/UPDATE/DELETE/TRUNCATE는 명시적으로 REVOKE됨 |
 | `hug_defaulters` | HUG 상습채무불이행자 명단 로컬 캐시 | `name`, `age`, `address`, `deposit_return_debt`, `debt_occurred_at`, `guarantee_payment_at`, `reimbursement_debt`, `execution_count`, `base_date`, `raw_row_hash`(unique, upsert 키) | `scripts/sync-hug-defaulters.mjs`(service_role, GitHub Actions) | `analyze-contract`(이름 유사도 검색), `_shared/riskScore.ts`(지역별 카운트) | 활성. `anon`/`authenticated` 전체 SELECT 가능 |
 | `hug_sync_cursor` | HUG 크롤링 진행 상태(단일 행) | `id`(PK, 항상 1), `last_page`, `total_pages` | (현재 크롤러 스크립트에서 직접 갱신하지는 않고 구조만 존재 — 아래 7장 참고) | — | **한때 RLS 미적용 상태였음** — 아래 참고 |
-| `batch_job_status` | 배치 4종의 마지막 실행/성공 시각·에러 기록 (2026-08-18 추가, 3-5 참고) | `job_name`(PK), `last_run_at`, `last_success_at`, `last_error`, `last_result`(jsonb) | 4개 배치(3개 Edge Function + `sync-hug-defaulters.mjs`) 각자 service_role로 자가 기록 | `Profile.tsx`의 `BatchJobStatusCard`(`fetchBatchJobStatus`) | 활성. `authenticated`만 SELECT 가능(비로그인 anon 차단) |
+| `batch_job_status` | 배치 4종의 마지막 실행/성공 시각·에러 기록 (2026-08-18 추가, 3-5 참고) | `job_name`(PK), `last_run_at`, `last_success_at`, `last_error`, `last_result`(jsonb) | 4개 배치(3개 Edge Function + `sync-hug-defaulters.mjs`) 각자 service_role로 자가 기록 | `Profile.tsx`의 `BatchJobStatusCard`(`fetchBatchJobStatus`) | 활성. **관리자 이메일만 SELECT 가능**(2026-08-21부터 `authenticated`→admin으로 강화, 3-5 참고) |
 
 **RLS 관련 특이사항**: `hug_sync_cursor`는 생성 당시(마이그레이션 `20260721000001`) RLS를 켜는 구문이 누락되어, `anon`/`authenticated` 기본 권한이 그대로 노출된 채로 한동안 존재했습니다. 이후 별도 보안 감사에서 발견되어 `20260721000007_enable_rls_hug_sync_cursor.sql`로 RLS를 활성화(정책은 추가하지 않아 결과적으로 service_role만 접근 가능)했습니다. `contract_risk_patterns` 역시 한 시점에 원격 DB에서 테이블이 수동으로 재생성되며 RLS가 꺼진 채로 방치되어 `anon` 키로 쓰기가 가능했던 이력이 있었고, 이 역시 같은 감사에서 발견되어 `20260721000005` 마이그레이션으로 RLS 재활성화 및 쓰기 권한 REVOKE로 조치되었습니다.
+
+**`analyses.score_direction` — 점수 방향 반전에 따른 신/구 데이터 구분(2026-08-21)**: 계약서 종합 점수 체계가 "낮을수록 위험"에서 안심맵과 같은 "높을수록 위험"으로 바뀌면서(6-2 참고), 이미 저장된 과거 행은 옛 기준으로 계산된 값이라 새 기준으로 그대로 해석하면 안 됩니다. `20260821010100_add_analyses_score_direction.sql`이 이 컬럼을 추가하면서, 마이그레이션 시점에 이미 존재하던 행은 전부 `'legacy_low_is_risky'`로, 그 이후 새로 저장되는 행은 기본값 `'high_is_risky'`로 채워집니다. 값을 기계적으로 반전(100-score)하지 않은 이유는 과거 값이 Gemini의 자유 판단이라 새 계산식과 수학적으로 정확히 대응한다는 보장이 없기 때문이며(애초에 이 리워크의 계기), 대신 프론트(`Analysis.tsx`)가 이 컬럼을 보고 과거 이력에는 "예전 채점 기준" 안내를 표시합니다.
 
 **`risk_level` 값 체계가 테이블마다 다릅니다**: `analyses`는 영어(`danger`/`warning`/`success`), `gaslighting_checks`·`region_stats`는 한글(`위험`/`주의`/`안전`)을 씁니다. 기능적으로 문제는 없지만(각자 자기 테이블 안에서만 일관되게 사용) 하나의 코드베이스 안에 두 가지 어휘가 공존하는 점은 알아두어야 합니다.
 
 **`contract_risk_patterns` 스키마 이력 — 코드상 실제로 꼬여 있는 부분**: 최초 마이그레이션(`20260721000000`)은 `category`/`pattern_description`/`risk_level`/`example_clause`/`source`/`keywords`/`search_vector`(생성 컬럼, tsvector) 스키마로 테이블을 만듭니다. 이후 시딩 마이그레이션(`20260721000002`)도 이 컬럼명을 그대로 씁니다. 그런데 `20260721000005`는 주석으로 "실제 운영 DB는 2026-07-20에 수동으로 `pattern_name`/`description`/`severity`/`recommended_action` 스키마로 재생성되었다"고 밝히면서, 동일한 `create table if not exists` 구문을 다시 씁니다. **`IF NOT EXISTS` 때문에, 이 마이그레이션들을 처음부터 순서대로 재생하면(예: 새 환경에 배포) 최초 스키마(구 컬럼명)가 그대로 유지되고 새 스키마로 바뀌지 않습니다** — 즉 "마이그레이션 파일이 기술하는 스키마"와 "실제 운영 DB의 현재 스키마"가 서로 다를 수 있는 상태입니다. 현재 `analyze-contract` 함수 코드는 새 컬럼명(`pattern_name`, `description`, `severity`, `recommended_action`)으로 쿼리하므로, 최초 스키마 그대로인 환경에서는 이 쿼리가 실패합니다. 새 마이그레이션으로 정리되지 않은 기술 부채입니다.
 
-**HUG 관련 RPC 함수 2종**(둘 다 마이그레이션에서 정의):
+**RPC 함수 3종**(모두 마이그레이션에서 `create or replace function`으로 정의):
 - `search_hug_defaulters_by_name(query_name, min_similarity=0.4)` — 이름 컬럼에 대한 `pg_trgm` 유사도 검색, 상위 5건. `analyze-contract`가 계약서에서 추출한 임대인 이름을 확인할 때 사용.
 - `hug_defaulter_region_counts()` — `hug_defaulters.address`를 정규식(한글 단어 경계 패턴)과 시/도 약칭↔정식명 별칭 테이블로 `region_stats.region_name`에 매칭해 지역별 명단 건수를 집계. 유사도가 아니라 **정확한 토큰 매칭**이며, "남동구"가 "동구"에 잘못 매칭되는 것을 막기 위한 경계 처리가 되어 있습니다. `_shared/riskScore.ts`가 지역 위험도 계산 시 호출.
+- `match_region_by_address(input_address)`(2026-08-21 추가) — 계약서에서 추출한 매물 주소(자유 텍스트)로 `region_stats`에서 가장 구체적으로(region_name이 가장 긴) 일치하는 지역 하나를 찾아 `region_code`/`avg_sale_price`/`villa_avg_sale_price`를 반환합니다. 매칭 방식은 `hug_defaulter_region_counts()`와 동일한 토큰·별칭 매칭 로직을 재사용하되, 이쪽은 지역별 집계가 아니라 입력 주소 하나를 전체 지역과 비교해 단일 매칭을 찾는 용도입니다. `analyze-contract`가 전세가율 카테고리를 계산할 때 호출하며, `service_role`에만 EXECUTE 권한을 부여합니다(anon/authenticated는 직접 호출할 이유가 없음).
 
 ---
 
 ## 6. 위험도 점수 산출 로직
 
-이 프로젝트에는 성격이 완전히 다른 두 가지 "위험도"가 있습니다. 하나는 **결정론적 수식으로 서버가 직접 계산**하고, 다른 하나는 **AI가 판단해서 그대로 내려주는 값**입니다. 멘토링에서 가장 헷갈리기 쉬운 지점이라 명확히 구분합니다.
+이 프로젝트에는 계약서 위험도와 안심맵 지역 위험도, 두 가지 "위험도"가 있습니다. 2026-08-21 이전에는 계약서 위험도가 Gemini 판단을 그대로 쓰는 값이라 안심맵과 성격이 완전히 달랐지만, 이제 **둘 다 최종 점수는 서버 코드가 결정론적 공식(가중평균)으로 계산**합니다. 다만 계약서 위험도는 그 공식에 들어가는 입력값 중 3개(권리관계·특약사항·건물상태 카테고리 점수)가 여전히 Gemini의 판단이라, "결합 방식은 재현 가능하지만 입력값 자체는 비결정적"이라는 절충 상태라는 점이 두 위험도의 진짜 차이입니다. 멘토링에서 헷갈리기 쉬운 지점이라 아래에서 명확히 구분합니다.
 
 ### 6-1. 안심맵 지역 위험도 — 코드로 계산되는 확정 수식
 
@@ -235,14 +254,39 @@ riskLevel = riskScore ≥ 70 → '위험'
 
 이 50%/30%/20% 가중치가 바로 `SignalMap.tsx` 사이드바에 안내되는 수치와 정확히 일치합니다(README와 UI 문구가 실제 코드와 맞는 몇 안 되는 정량적 주장 중 하나로, 직접 대조 확인했습니다). 한 가지 예외 처리로, 그 달 아파트·빌라 실거래가 데이터가 둘 다 없는 지역은 `jeonseRatio`가 `null`이 되어 `calculateRisk()`가 아예 `null`을 반환하고 — 이 경우 기존에 저장돼 있던 `risk_score`/`risk_level` 값이 그대로 남습니다(즉 오래된 값일 수 있고, 화면에서 이를 구분해서 보여주지는 않습니다).
 
-### 6-2. 계약서 위험도 — 서버 공식이 존재하지 않음
+### 6-2. 계약서 위험도 — 이제 서버가 가중평균으로 계산 (2026-08-21 개편)
 
-솔직히 말하면 **계약서의 `overallScore`(0~100)와 `riskLevel`은 서버 코드에 어떤 계산식도 없습니다.** `analyze-contract` 함수는 Gemini에게 JSON 스키마(`overallScore: INTEGER`, `riskLevel: enum`)로 응답을 강제할 뿐이고, 응답이 오면 `JSON.parse()`해서 그대로 클라이언트에 돌려주고 DB에 저장합니다. 서버가 개입하는 유일한 지점은:
+이전에는 **계약서의 `overallScore`(0~100)와 `riskLevel`을 Gemini가 직접 산출**해 서버는 JSON을 그대로 파싱해 쓰는 구조였고, 재현성이 보장되지 않는다는 문제가 있었습니다(같은 계약서를 두 번 올려도 값이 달라질 수 있었음). `_shared/contractScore.ts`가 이 문제를 해결하기 위해 도입됐습니다 — Gemini의 역할을 "카테고리별 위험도 판단"으로 좁히고, **그 판단들을 종합 점수로 합치는 계산은 서버 코드가 고정된 공식으로 수행**합니다.
 
-- 프롬프트 텍스트로 "패턴 DB의 위험 신호(대항력 악용·신탁 부동산 등)가 발견되면 `overallScore`를 40점 미만으로 낮추라"고 **모델에게 지시**하는 것 — 이는 코드가 검증하는 규칙이 아니라 모델이 지켜주길 기대하는 자연어 지시이며, 실제로 지켜지는지 서버가 재확인하지 않습니다.
-- HUG 명단 실명 대조(`hugDefaulterMatch`)만은 서버가 직접 SQL로 계산한 값이지만, 이것도 `overallScore` 자체에 영향을 주도록 코드로 연결되어 있지는 않습니다(대조 결과는 별도 필드로 붙을 뿐).
+**입력 — 카테고리 4개**:
+1. 권리관계, 특약사항, 건물상태 — Gemini가 각각 0~100점(높을수록 위험)으로 채점(3-1의 ③-4 참고). 이 3개는 여전히 Gemini의 비결정적 판단입니다.
+2. 전세가율 — 서버가 `match_region_by_address` RPC로 계약서 주소를 지역에 매칭하고, 그 지역의 국토부 실거래가 평균 매매가와 보증금을 비교해 계산(3-1의 ③-5 참고, 안심맵과 동일한 `jeonseRatioScore()` 곡선 재사용). 매칭 실패·시세 데이터 없음이면 `score: null`.
 
-즉 계약서 위험도는 **재현성이 보장되지 않습니다.** 같은 계약서를 두 번 올려도 Gemini의 비결정적 특성상 점수가 달라질 수 있고, 이를 검증하거나 클램핑하는 서버 로직도 없습니다. 심리 가드의 `confidence`/패턴 점수도 동일하게 전부 Gemini가 산출한 값을 그대로 사용하는 구조입니다.
+**결합 — `calculateOverallScore(categories, hasCriticalPattern)`**:
+
+```
+CATEGORY_WEIGHTS = { 권리관계: 0.35, 특약사항: 0.30, 전세가율: 0.25, 건물상태: 0.10 }
+
+overallScore = round( Σ (카테고리 점수 × 정규화된 가중치) )
+  # 정규화: score가 null인 카테고리는 계산에서 제외하고, 남은 카테고리끼리 가중치 합이 1이 되도록
+  # 다시 나눈다(예: 전세가율이 데이터 없음이면 나머지 3개가 35/30/10을 남은 비율로 재분배).
+
+hasCriticalPattern(= Gemini의 hugLandlordCheck.isBlacklisted)가 true면:
+  overallScore = max(overallScore, 61)   # CRITICAL_PATTERN_FLOOR — 계산상 안전해 보여도
+                                          # 확인된 위험 패턴이 있으면 강제로 위험 등급 하한까지 끌어올림
+
+riskLevel = overallScore > 60 → 'danger'   # DANGER_THRESHOLD
+            overallScore > 30 → 'warning'  # SUCCESS_THRESHOLD
+            그 외             → 'success'
+```
+
+DANGER_THRESHOLD(60)와 SUCCESS_THRESHOLD(30)는 코드 주석에 따르면 개편 전 "40점 미만 = danger(낮을수록 위험)" 기준을 방향만 반전(100-40=60)해 대칭적으로 유도한 값입니다.
+
+**HUG 명단 실명 대조(`hugDefaulterMatch`)는 이 공식과 별개**입니다 — 서버가 직접 SQL로 계산한 사실 확인 값이지만, `overallScore` 계산에는 관여하지 않고 응답에 별도 필드로만 붙습니다(화면에서는 빨간 배너로 별도 표시).
+
+**남은 비결정성**: 종합 점수를 만드는 결합 공식 자체는 100% 재현 가능하지만, 입력값인 권리관계·특약사항·건물상태 3개 카테고리 점수는 여전히 Gemini가 매번 새로 판단하는 값이라 완전한 재현성은 아닙니다(전세가율만 완전한 결정론). 심리 가드의 `confidence`/패턴 점수는 이번 개편과 무관하게 이전과 동일하게 전부 Gemini가 산출한 값을 그대로 사용하는 구조입니다.
+
+**점수 방향과 등급 경계는 앱 내 `/scoring`(`ScoringGuide.tsx`) 페이지에도 노출됩니다** — 이 화면은 `CATEGORY_WEIGHTS`/`calculateOverallScore`의 값을 하드코딩된 표로 옮겨 보여줄 뿐 실제 상수를 import하지는 않으므로, `_shared/contractScore.ts`나 `_shared/riskScore.ts`의 값이 바뀌면 `ScoringGuide.tsx`도 사람이 함께 고쳐야 합니다(코드 주석에 "같은 값을 유지해야 한다"고 명시돼 있음 — 7장의 코드 품질 항목 참고).
 
 ---
 
@@ -251,7 +295,7 @@ riskLevel = riskScore ≥ 70 → '위험'
 코드에 리터럴 `TODO`/`FIXME` 주석은 없었습니다(전체 `src/`, `supabase/` 검색 결과 0건). 다만 실질적으로 TODO에 해당하는 주석과, 코드를 직접 읽어야만 드러나는 한계들은 다음과 같습니다.
 
 **정확도·재현성 관련**
-- 계약서 위험 점수(`overallScore`, `riskLevel`)에 서버 검증 로직이 없어 재현성이 보장되지 않습니다(6-2 참고).
+- 계약서 위험 점수(`overallScore`, `riskLevel`)는 2026-08-21부터 종합 점수 결합 방식은 서버 공식으로 고정됐지만(6-2 참고), 그 입력값인 권리관계·특약사항·건물상태 3개 카테고리 점수는 여전히 Gemini가 매번 새로 판단하는 값이라 완전한 재현성은 아닙니다(전세가율만 완전한 결정론).
 - `analyze-contract`의 "RAG"는 실제로는 유사도 검색이 아니라 지식베이스(~20건) 전체를 프롬프트에 덤프하는 방식입니다. 작성자 스스로 "테이블이 커지면 검색 기반으로 바꿀 것"이라고 남긴 주석이 있어 사실상 TODO입니다.
 - `region_stats`의 위험도는 그 달 실거래 데이터가 없는 지역의 경우 갱신되지 않고 이전 값이 그대로 유지되며, 화면에서 이를 "오래된 데이터"로 구분해 보여주지 않습니다.
 - HUG 명단-지역 매칭(`hug_defaulter_region_counts`)은 정규식 토큰 매칭이라 주소 표기가 특이한 케이스는 누락될 수 있습니다(README의 "98.9% 매칭" 같은 구체적 수치는 코드 어디에도 계산·저장되어 있지 않아 검증이 불가능합니다 — 실제 매칭률을 추적하는 로직 자체가 없습니다).
@@ -274,6 +318,7 @@ riskLevel = riskScore ≥ 70 → '위험'
 - Gemini 재시도(backoff) 로직이 `analyze-contract`/`analyze-chat`에 동일하게 복사돼 있습니다(공유 모듈로 추출되지 않음).
 - 파일→base64 변환 함수, 패턴 점수 색상 임계값(`patternTone`), 위험도 색상 hex 값이 여러 파일에 중복 정의되어 있습니다.
 - `analyses.risk_level`(영어)과 `gaslighting_checks`/`region_stats.risk_level`(한글)의 어휘가 다릅니다.
+- `/scoring`(`ScoringGuide.tsx`)의 가중치 표는 `_shared/contractScore.ts`/`_shared/riskScore.ts`의 실제 상수를 import하는 게 아니라 값을 그대로 옮겨 적은 별도 상수(`CONTRACT_WEIGHTS`, `MAP_WEIGHTS`)입니다. 두 곳의 상수가 어긋나도 빌드나 타입체크로는 잡히지 않고, 코드 주석으로 "같은 값을 유지해야 한다"고만 남겨둔 상태입니다(6-2 참고).
 
 **성능/UX**
 - 프론트에서 파일→base64 변환이 바이트 단위 동기 루프라 큰 파일에서는 메인 스레드가 잠깐 멈출 수 있습니다. 클라이언트 측 파일 크기/타입 검증이 전혀 없습니다.
