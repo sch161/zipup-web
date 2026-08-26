@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BrokenText from '../components/ui/BrokenText'
 import Card from '../components/ui/Card'
 import TopNav from '../components/TopNav'
+import { fetchPatternSources, type PatternSource } from '../lib/patternSources'
 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -63,8 +64,39 @@ function WeightTable({ rows }: { rows: WeightRow[] }) {
   )
 }
 
+function PatternSourceList({ sources }: { sources: PatternSource[] }) {
+  if (sources.length === 0) return null
+
+  return (
+    <ul className="mt-2 flex flex-col gap-2">
+      {sources.map((source) => (
+        <li key={source.url} className="rounded-2xl bg-subtle p-2.5">
+          <p className="text-xs font-bold text-text-dark">{source.organization}</p>
+          <p className="mt-0.5 text-[11px] font-bold text-text-gray">{source.title}</p>
+          <p className="mt-1 text-pretty text-[11px] leading-relaxed text-text-gray">{source.description}</p>
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-block break-all text-[11px] font-bold text-primary underline underline-offset-2"
+          >
+            {source.url}
+          </a>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 export default function ScoringGuide() {
   const navigate = useNavigate()
+  const [patternSources, setPatternSources] = useState<PatternSource[]>([])
+
+  useEffect(() => {
+    fetchPatternSources()
+      .then(setPatternSources)
+      .catch(() => setPatternSources([]))
+  }, [])
 
   return (
     <div className="flex min-h-screen flex-col bg-bg">
@@ -122,7 +154,12 @@ export default function ScoringGuide() {
             </p>
           </Section>
 
-          <Section title="5. 참고해주세요">
+          <Section title="5. 위험 패턴 데이터 출처">
+            <BrokenText text="AI가 계약서와 비교하는 전세사기 위험 패턴 20건은 아래 3개 자료를 종합해 정리한 것이에요. 개별 판례나 사례 하나하나를 인용한 것이 아니라, 세 기관의 자료에서 반복적으로 확인되는 피해 유형을 유형화한 결과입니다." />
+            <PatternSourceList sources={patternSources} />
+          </Section>
+
+          <Section title="6. 참고해주세요">
             <ul className="flex flex-col gap-1">
               <li>
                 <BrokenText text="· 이 점수는 계약 여부를 대신 판단해주는 것이 아니라, 무엇을 더 확인해야 하는지 알려주는 참고 지표예요." />

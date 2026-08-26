@@ -160,6 +160,14 @@ export default function Analysis() {
                 사례와 계약서 내용을 비교한 추정 결과라 그래요).
                 {result.hugDefaulterMatch?.matched ? ' 위의 HUG 공식 명단 확인 결과와 함께 봐주세요.' : ''}
               </span>
+              <br />
+              <span className="text-text-gray">
+                * 경기도 전세피해지원센터, 국토교통부·HUG, 한국공인중개사협회 자료를 참고해 정리한
+                피해 유형과 비교한 결과입니다(개별 판례를 인용한 것은 아니에요).{' '}
+                <Link to="/scoring" className="font-bold text-primary underline underline-offset-2">
+                  출처 자세히 보기
+                </Link>
+              </span>
             </p>
           </div>
         )}
