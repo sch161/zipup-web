@@ -233,6 +233,20 @@ export default function Analysis() {
                         </Chip>
                       </div>
                       <p className="mt-0.5 text-pretty text-[11px] leading-snug text-text-gray">{clause.explanation}</p>
+                      {clause.legalProvision && (
+                        <p className="mt-1 text-pretty text-[11px] leading-snug text-text-gray">
+                          <span className="font-bold text-text-dark">관련 법령: </span>
+                          {clause.legalProvision.lawName} {clause.legalProvision.article} — {clause.legalProvision.plainExplanation}{' '}
+                          <a
+                            href={clause.legalProvision.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-bold text-primary underline underline-offset-2"
+                          >
+                            국가법령정보센터에서 보기
+                          </a>
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>

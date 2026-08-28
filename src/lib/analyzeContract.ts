@@ -25,10 +25,22 @@ export interface ScoreBreakdownItem {
   included: boolean
 }
 
+/** 위험 조항의 근거가 되는 실제 법 조문(legal_provisions 테이블). analyze-contract가
+ * pattern_legal_provisions로 매칭된 위험 패턴에 연결된 조문만 Gemini에 후보로 주고,
+ * Gemini가 그 후보 중에서 골랐을 때만(또는 없으면 null) 여기 채워서 내려준다. */
+export interface LegalProvision {
+  lawName: string
+  article: string
+  title: string
+  plainExplanation: string
+  sourceUrl: string
+}
+
 export interface DetectedClause {
   summary: string
   level: RiskLevel
   explanation: string
+  legalProvision?: LegalProvision | null
 }
 
 export interface HugDefaulterMatch {

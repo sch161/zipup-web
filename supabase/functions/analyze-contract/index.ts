@@ -61,6 +61,17 @@ interface HugDefaulterMatch {
   similarity: number
 }
 
+// legal_provisions의 실제 컬럼(20260828000000_create_legal_provisions.sql 참고).
+interface LegalProvisionRow {
+  id: number
+  law_name: string
+  article: string
+  title: string
+  content: string
+  plain_explanation: string
+  source_url: string
+}
+
 // Gemini가 매기는 카테고리는 3개뿐이다 — 전세가율은 서버가 국토부 실거래가로 직접 계산해서
 // 별도로 추가한다(계산 로직은 아래 computeJeonseRatioCategory 참고).
 const GEMINI_CATEGORY_NAMES: readonly CategoryName[] = ['권리관계', '특약사항', '건물상태']
@@ -107,6 +118,12 @@ const ANALYSIS_RESPONSE_SCHEMA = {
           summary: { type: 'STRING', description: '조항 원문 요약' },
           level: { type: 'STRING', enum: RISK_LEVELS },
           explanation: { type: 'STRING', description: '어려운 용어 해설 및 왜 위험/주의/안전한지에 대한 AI 설명, 1~2문장' },
+          legalProvisionId: {
+            type: 'INTEGER',
+            nullable: true,
+            description:
+              '[관련 법 조항 후보] 목록에 있는 id 중 이 조항의 실제 법적 근거가 되는 것 하나. 후보 목록에 없는 id를 만들어내지 말 것. 명확히 들어맞는 후보가 없으면 반드시 null.',
+          },
         },
         required: ['summary', 'level', 'explanation'],
       },
@@ -190,12 +207,26 @@ function formatRiskPatterns(patterns: RiskPattern[]): string {
     .join('\n')
 }
 
-function buildPrompt(input: AnalyzeRequest, referenceData: string): string {
+// 사례(contract_risk_patterns)와 마찬가지로 원문을 그대로 넣으면 토큰이 커지므로 잘라 넣는다.
+// 다만 legalProvisionId 매칭은 정확성이 중요하니 사례보다는 넉넉하게 자른다.
+function formatLegalProvisions(provisions: LegalProvisionRow[]): string {
+  if (provisions.length === 0) {
+    return '(이번 계약서와 관련된 법 조항 후보가 없습니다 — 모든 detectedClauses의 legalProvisionId는 null로 두세요.)'
+  }
+  return provisions
+    .map((p) => `[조항 id=${p.id}] ${p.law_name} ${p.article}(${p.title}): ${truncate(p.content, 200)}`)
+    .join('\n')
+}
+
+function buildPrompt(input: AnalyzeRequest, referenceData: string, legalProvisionsData: string): string {
   return `당신은 대한민국 최고 수준의 부동산 임대차 계약서 분석 및 전세사기 예방 AI 전문가입니다.
 아래 매물 정보, 첨부 문서, 그리고 [전세사기 및 독소조항 피해 사례 모음]을 바탕으로 위험도를 정밀 진단하세요.
 
 [전세사기 및 독소조항 피해 사례 모음]
 ${referenceData}
+
+[관련 법 조항 후보]
+${legalProvisionsData}
 
 [분석 대상 매물 정보]
 - 매물 주소: ${input.address ?? '정보 없음'}
@@ -212,7 +243,8 @@ ${referenceData}
 7. 첨부된 문서 이미지에는 개인정보 보호를 위해 주민등록번호·계좌번호·연락처·성명 등 일부 영역이 검은 사각형으로 가려져 있습니다. 이는 정상적인 처리이니 가려진 부분을 추측해서 채우거나 문제로 언급하지 말고, 가려지지 않은 나머지 내용(보증금, 주소, 특약사항 등)만으로 분석하세요.
 8. recommendedActions는 가장 중요한 3~5개만 문장으로 나열하세요.
 9. aiComment는 2~3문장으로 핵심만 요약하세요.
-10. 불필요하게 길게 쓰지 말고, 위 문장 수 제한을 반드시 지켜 간결하게 응답하세요. 반드시 지정된 JSON 스키마 형식으로만 응답을 반환하세요.`
+10. 각 detectedClauses 항목의 legalProvisionId에는 [관련 법 조항 후보]에 나열된 id 중 그 조항의 실제 법적 근거가 되는 것 하나만 쓰세요. 후보 목록에 없는 id를 지어내지 말고, 명확히 들어맞는 후보가 없으면 반드시 null로 두세요.
+11. 불필요하게 길게 쓰지 말고, 위 문장 수 제한을 반드시 지켜 간결하게 응답하세요. 반드시 지정된 JSON 스키마 형식으로만 응답을 반환하세요.`
 }
 
 /** contract_risk_patterns 전체(20건)를 가져온다. 실제로 프롬프트에 넣을 패턴은 이 중
@@ -229,6 +261,41 @@ async function fetchAllRiskPatterns(supabaseAdmin: ReturnType<typeof createClien
     return []
   }
   return data ?? []
+}
+
+/** 매칭된(=프롬프트에 실제로 들어가는) 위험 패턴에 pattern_legal_provisions로 연결된 법
+ *  조문만 가져온다. 패턴-조문 매핑이 다대다라 legal_provision_id가 중복될 수 있으므로
+ *  Map으로 중복 제거한다. 20건 전체가 아니라 이미 걸러진 소수 패턴 기준이라 항상 가볍다. */
+async function fetchLegalProvisionsForPatterns(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  patternIds: number[],
+): Promise<LegalProvisionRow[]> {
+  if (patternIds.length === 0) return []
+
+  const { data: links, error: linkError } = await supabaseAdmin
+    .from('pattern_legal_provisions')
+    .select('legal_provision_id')
+    .in('pattern_id', patternIds)
+
+  if (linkError) {
+    console.error('fetchLegalProvisionsForPatterns (links) failed, continuing without legal provisions', linkError)
+    return []
+  }
+
+  const linkRows = (links ?? []) as { legal_provision_id: number }[]
+  const legalProvisionIds = [...new Set(linkRows.map((l) => l.legal_provision_id))]
+  if (legalProvisionIds.length === 0) return []
+
+  const { data: provisions, error: provisionError } = await supabaseAdmin
+    .from('legal_provisions')
+    .select('id, law_name, article, title, content, plain_explanation, source_url')
+    .in('id', legalProvisionIds)
+
+  if (provisionError) {
+    console.error('fetchLegalProvisionsForPatterns (provisions) failed, continuing without legal provisions', provisionError)
+    return []
+  }
+  return provisions ?? []
 }
 
 async function resolveUserId(req: Request): Promise<string | null> {
@@ -260,6 +327,34 @@ function coerceGeminiCategories(raw: unknown): ScoredCategory[] {
       name,
       score: Math.max(0, Math.min(100, Math.round(rawScore))),
       comment: typeof match?.comment === 'string' ? match.comment : '',
+    }
+  })
+}
+
+/** Gemini가 돌려준 detectedClauses의 legalProvisionId를, 서버가 실제로 프롬프트에 제공했던
+ *  legal_provisions 중에서만 매칭해 완전한 조문 정보로 치환한다. Gemini가 후보에 없는 id를
+ *  지어내거나(환각) 이상한 타입을 보내도 조용히 null로 처리한다 — "제공된 후보 중에서만
+ *  선택"이라는 프롬프트 지침을 서버에서도 강제하는 방어 코드다. */
+function resolveDetectedClauses(raw: unknown, legalProvisionById: Map<number, LegalProvisionRow>) {
+  const list = Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []
+
+  return list.map((clause) => {
+    const rawId = clause.legalProvisionId
+    const provision = typeof rawId === 'number' ? legalProvisionById.get(rawId) : undefined
+
+    return {
+      summary: clause.summary,
+      level: clause.level,
+      explanation: clause.explanation,
+      legalProvision: provision
+        ? {
+            lawName: provision.law_name,
+            article: provision.article,
+            title: provision.title,
+            plainExplanation: provision.plain_explanation,
+            sourceUrl: provision.source_url,
+          }
+        : null,
     }
   })
 }
@@ -449,7 +544,21 @@ Deno.serve(async (req: Request) => {
 
   const referenceKnowledge = formatRiskPatterns(patternFilter.matched)
 
-  const parts: Record<string, unknown>[] = [{ text: buildPrompt(input, referenceKnowledge) }]
+  // 프롬프트에 실제로 들어간 패턴(patternFilter.matched, 폴백으로 20건 전체인 경우도 포함)에만
+  // 연결된 법 조항을 가져온다 — 20개 패턴 전체가 아니라 이미 걸러진 소수 기준이라 가볍다.
+  const legalProvisionsStart = Date.now()
+  const legalProvisions = await fetchLegalProvisionsForPatterns(supabaseAdmin, patternFilter.matchedIds)
+  stageTimingsMs.legalProvisions = Date.now() - legalProvisionsStart
+
+  console.log(
+    'Legal provisions for prompt',
+    JSON.stringify({ count: legalProvisions.length, ids: legalProvisions.map((p) => p.id) }),
+  )
+
+  const legalProvisionsKnowledge = formatLegalProvisions(legalProvisions)
+  const legalProvisionById = new Map(legalProvisions.map((p) => [p.id, p]))
+
+  const parts: Record<string, unknown>[] = [{ text: buildPrompt(input, referenceKnowledge, legalProvisionsKnowledge) }]
   if (input.fileBase64 && input.fileMimeType) {
     parts.push({ inline_data: { mime_type: input.fileMimeType, data: input.fileBase64 } })
   }
@@ -531,7 +640,7 @@ Deno.serve(async (req: Request) => {
         level: c.score != null ? scoreToRiskLevel(c.score) : null,
         comment: c.comment,
       })),
-      detectedClauses: geminiResult.detectedClauses ?? [],
+      detectedClauses: resolveDetectedClauses(geminiResult.detectedClauses, legalProvisionById),
       recommendedActions: geminiResult.recommendedActions ?? [],
       aiComment: geminiResult.aiComment ?? '',
       hugLandlordCheck: geminiResult.hugLandlordCheck,
