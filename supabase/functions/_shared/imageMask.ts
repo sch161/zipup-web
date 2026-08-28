@@ -10,7 +10,7 @@ import {
   initializeImageMagick,
   MagickColor,
   MagickFormat,
-} from 'npm:@imagemagick/magick-wasm@^0'
+} from 'npm:@imagemagick/magick-wasm@0.0.43'
 import type { MaskBox } from './piiMask.ts'
 
 let initPromise: Promise<void> | null = null
@@ -18,8 +18,19 @@ let initPromise: Promise<void> | null = null
 function ensureInitialized(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
+      // 0.0.43(2026-08-25 배포)부터 magick.wasm이 dist/ 바로 밑이 아니라
+      // dist/x86(기본, wasm32)/dist/x64(memory64) 하위로 옮겨졌고 서브패스 export로만
+      // 공개된다 — package.json의 "./magick.wasm" export(→ dist/x86/magick.wasm)를
+      // import.meta.resolve로 그대로 따라가야, 이 패키지가 내부 파일 배치를 또 바꿔도
+      // 깨지지 않는다. 예전처럼 메인 엔트리 URL에 상대경로 'magick.wasm'을 직접 이어붙이던
+      // 방식은 이번 버전에서 dist/magick.wasm이 사라지며 404가 났다. 버전도 `^0`(모든 0.x
+      // 허용) 대신 정확히 고정해, 다음 재배포에서 또 다른 패치가 조용히 레이아웃을 바꿔도
+      // 이 함수가 예고 없이 깨지지 않게 한다.
+      // 주의: import.meta.resolve()는 "file:///..." 문자열을 반환하는데, Deno.readFile은
+      // 문자열 인자를 URL이 아니라 리터럴 OS 경로로 취급한다 — new URL(...)로 감싸지 않으면
+      // "file:"로 시작하는 이름의 상대 경로를 찾다가 NotFound로 실패한다(로컬 Deno로 재현 확인).
       const wasmBytes = await Deno.readFile(
-        new URL('magick.wasm', import.meta.resolve('npm:@imagemagick/magick-wasm@^0')),
+        new URL(import.meta.resolve('npm:@imagemagick/magick-wasm@0.0.43/magick.wasm')),
       )
       await initializeImageMagick(wasmBytes)
     })()

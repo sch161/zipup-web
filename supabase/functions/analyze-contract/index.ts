@@ -15,6 +15,7 @@ import {
   type CategoryName,
   type ScoredCategory,
 } from '../_shared/contractScore.ts'
+import { filterRiskPatternsByKeywords, type RiskPattern } from '../_shared/riskPatternFilter.ts'
 
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 // Pinned model versions keep getting retired/restricted (2.0-flash, then 2.5-flash for new
@@ -53,15 +54,6 @@ interface AnalyzeRequest {
 }
 
 const RISK_LEVELS = ['danger', 'warning', 'success'] as const
-
-// contract_risk_patterns의 실제 컬럼(2026-07-20 기준. 스키마 확정본은
-// supabase/migrations/20260721000005_confirm_contract_risk_patterns_schema.sql 참고).
-interface RiskPattern {
-  pattern_name: string
-  description: string
-  severity: string
-  recommended_action: string
-}
 
 interface HugDefaulterMatch {
   name: string
@@ -223,12 +215,14 @@ ${referenceData}
 10. 불필요하게 길게 쓰지 말고, 위 문장 수 제한을 반드시 지켜 간결하게 응답하세요. 반드시 지정된 JSON 스키마 형식으로만 응답을 반환하세요.`
 }
 
-/** contract_risk_patterns 전체를 가져온다. 20건 내외의 작은 지식베이스라 키워드 검색 없이
- *  전부 프롬프트에 포함시킨다(테이블이 크게 늘어나면 다시 검색 기반으로 바꿀 것). */
+/** contract_risk_patterns 전체(20건)를 가져온다. 실제로 프롬프트에 넣을 패턴은 이 중
+ *  일부로 걸러진다(riskPatternFilter.ts의 filterRiskPatternsByKeywords 참고, 2026-08-28
+ *  추가 — 20건을 매번 통째로 넣으면 Gemini 요청이 무거워져 타임아웃이 잦았다). id는 그
+ *  키워드 매핑을 찾는 키로 쓰인다. */
 async function fetchAllRiskPatterns(supabaseAdmin: ReturnType<typeof createClient>): Promise<RiskPattern[]> {
   const { data, error } = await supabaseAdmin
     .from('contract_risk_patterns')
-    .select('pattern_name, description, severity, recommended_action')
+    .select('id, pattern_name, description, severity, recommended_action')
 
   if (error) {
     console.error('fetchAllRiskPatterns failed, continuing without reference cases', error)
@@ -360,6 +354,15 @@ Deno.serve(async (req: Request) => {
   // 이 이름을 알 방법이 없다. 파일이 없으면(주소만으로 분석) 빈 문자열로 남아 HUG 조회를 건너뛴다.
   let landlordNameFromOcr = ''
 
+  // contract_risk_patterns 필터링(아래 참고)에 쓸 OCR 원문. 파일이 없으면 빈 문자열로 남고,
+  // filterRiskPatternsByKeywords는 빈 문자열이면 자동으로 전체 패턴 폴백을 반환한다.
+  let ocrTextForPatternMatch = ''
+
+  // 파이프라인 단계별 소요 시간(ms). 파일 첨부가 없으면 리사이즈/OCR/마스킹 관련 키는 아예
+  // 채워지지 않는다(해당 단계 자체가 실행되지 않으므로). 요청 하나가 끝날 때 한 번에 로그로
+  // 남겨야 "이번 요청은 OCR이 느렸다/Gemini가 느렸다"를 바로 구분할 수 있다.
+  const stageTimingsMs: Record<string, number> = {}
+
   if (input.fileBase64 && input.fileMimeType) {
     if (!mimeTypeToClovaFormat(input.fileMimeType)) {
       return jsonResponse({ error: '이미지 파일(JPG, PNG)만 업로드할 수 있습니다.' }, 400)
@@ -370,7 +373,9 @@ Deno.serve(async (req: Request) => {
     // 좌표가 어긋난다). 실패하면 마스킹을 보장할 수 없으므로 분석을 중단한다.
     let workingImageBytes: Uint8Array
     try {
+      const t0 = Date.now()
       workingImageBytes = await prepareImageForOcr(base64ToBytes(input.fileBase64))
+      stageTimingsMs.resize = Date.now() - t0
     } catch (err) {
       console.error('Image normalize/resize failed, blocking analysis (cannot guarantee PII masking)', err)
       return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
@@ -378,7 +383,9 @@ Deno.serve(async (req: Request) => {
 
     let ocrFields: Awaited<ReturnType<typeof runClovaOcr>>
     try {
+      const t0 = Date.now()
       ocrFields = await runClovaOcr(bytesToBase64(workingImageBytes), 'png')
+      stageTimingsMs.clovaOcr = Date.now() - t0
     } catch (err) {
       console.error('CLOVA OCR failed, blocking analysis (cannot guarantee PII masking)', err)
       return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
@@ -389,7 +396,13 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
     }
 
+    // 마스킹 전 원문 그대로 합쳐 둔다 — PII가 섞여 있지만 이 문자열은 패턴 키워드 매칭에만
+    // 쓰이고(리스크 패턴을 추리는 용도) 로그로 남기거나 Gemini에 보내지 않는다.
+    ocrTextForPatternMatch = ocrFields.map((f) => f.text).join(' ')
+
+    const piiDetectStart = Date.now()
     const { boxes, landlordName, stats } = findPiiMasks(ocrFields)
+    stageTimingsMs.piiDetect = Date.now() - piiDetectStart
     landlordNameFromOcr = landlordName
 
     // 실제 계약서에서 마스킹이 잘 되고 있는지 추적하기 위한 로그. 개수·유형만 남기고, 읽은 텍스트나
@@ -398,7 +411,9 @@ Deno.serve(async (req: Request) => {
 
     let maskedImageBase64: string
     try {
+      const t0 = Date.now()
       const maskedBytes = await applyBlackBoxes(workingImageBytes, boxes)
+      stageTimingsMs.imageEdit = Date.now() - t0
       maskedImageBase64 = bytesToBase64(maskedBytes)
     } catch (err) {
       console.error(
@@ -417,7 +432,22 @@ Deno.serve(async (req: Request) => {
   const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
   const riskPatterns = await fetchAllRiskPatterns(supabaseAdmin)
-  const referenceKnowledge = formatRiskPatterns(riskPatterns)
+
+  const patternFilterStart = Date.now()
+  const patternFilter = filterRiskPatternsByKeywords(riskPatterns, ocrTextForPatternMatch)
+  stageTimingsMs.patternFilter = Date.now() - patternFilterStart
+
+  console.log(
+    'Risk pattern filter',
+    JSON.stringify({
+      totalPatterns: riskPatterns.length,
+      matchedPatterns: patternFilter.matched.length,
+      matchedIds: patternFilter.matchedIds,
+      fellBackToAll: patternFilter.fellBackToAll,
+    }),
+  )
+
+  const referenceKnowledge = formatRiskPatterns(patternFilter.matched)
 
   const parts: Record<string, unknown>[] = [{ text: buildPrompt(input, referenceKnowledge) }]
   if (input.fileBase64 && input.fileMimeType) {
@@ -426,8 +456,21 @@ Deno.serve(async (req: Request) => {
 
   const startedAt = Date.now()
 
+  // 성공/실패 어느 경로로 끝나든 같은 모양의 로그 한 줄을 남긴다 — Gemini가 실패하는 요청이야말로
+  // 어느 단계가 오래 걸렸는지(특히 gemini 필드) 봐야 하는 경우인데, 예전엔 성공 경로에서만
+  // 찍혀서 실패 시 아무 것도 안 남았다.
+  const timingSummary = () => ({
+    ...stageTimingsMs,
+    total: Date.now() - startedAt,
+    matchedPatternCount: patternFilter.matched.length,
+    totalPatternCount: riskPatterns.length,
+  })
+
   try {
     // Gemini 호출과 전세가율 계산(국토부 실거래가 DB 조회)은 서로 무관하므로 병렬로 실행한다.
+    // Gemini 소요시간은 이 병렬 블록 전체가 아니라 callGeminiWithRetry 자기 자신의 시작~끝만
+    // 재도록 별도로 잰다(전세가율 계산이 더 오래 걸려도 Gemini 시간에 섞이지 않게).
+    const geminiCallStart = Date.now()
     const [{ ok, status, bodyText }, jeonseRatioCategory] = await Promise.all([
       callGeminiWithRetry(
         `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
@@ -439,12 +482,16 @@ Deno.serve(async (req: Request) => {
           },
         },
         28000,
-      ),
+      ).then((res) => {
+        stageTimingsMs.gemini = Date.now() - geminiCallStart
+        return res
+      }),
       computeJeonseRatioCategory(supabaseAdmin, input),
     ])
 
     if (!ok) {
       console.error(`Gemini API error ${status} after retries (${Date.now() - startedAt}ms)`, bodyText.slice(0, 500))
+      console.log('analyze-contract stage timings (ms)', JSON.stringify(timingSummary()))
       return jsonResponse({ error: 'AI 분석 요청에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 502)
     }
 
@@ -462,10 +509,12 @@ Deno.serve(async (req: Request) => {
     // 계산한다(_shared/contractScore.ts). hugLandlordCheck.isBlacklisted가 true면 계산 결과가
     // 낮게 나와도 danger 하한으로 끌어올린다.
     const categories = [...coerceGeminiCategories(geminiResult.categories), jeonseRatioCategory]
+    const scoreCalcStart = Date.now()
     const { overallScore, riskLevel, breakdown } = calculateOverallScore(
       categories,
       geminiResult.hugLandlordCheck?.isBlacklisted === true,
     )
+    stageTimingsMs.scoreCalc = Date.now() - scoreCalcStart
 
     const result = {
       overallScore,
@@ -525,9 +574,12 @@ Deno.serve(async (req: Request) => {
       console.error('analyses insert error', insertError)
     }
 
+    console.log('analyze-contract stage timings (ms)', JSON.stringify(timingSummary()))
+
     return jsonResponse(result)
   } catch (err) {
     console.error(`analyze-contract error after ${Date.now() - startedAt}ms`, err)
+    console.log('analyze-contract stage timings (ms)', JSON.stringify(timingSummary()))
     if (err instanceof Error && err.name === 'AbortError') {
       return jsonResponse({ error: 'AI 분석 요청이 시간 초과됐습니다. 잠시 후 다시 시도해주세요.' }, 502)
     }
