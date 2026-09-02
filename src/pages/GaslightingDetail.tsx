@@ -108,6 +108,13 @@ export default function GaslightingDetail() {
 
         {!loading && item && (
           <div className="mt-4 flex flex-col gap-4 lg:mt-6">
+            <Card className="border-warning/40 bg-warning-bg/40 py-2.5">
+              <p className="text-pretty text-[11px] leading-relaxed text-text-gray">
+                <span className="font-bold text-text-dark">⚠️ 법적 책임 고지 — </span>
+                <BrokenText text="AI가 대화 패턴을 분석해 참고 정보를 제공하지만, 실제 상황 판단은 사용자 본인이 하시기 바랍니다." />
+              </p>
+            </Card>
+
             <Card className="flex items-center gap-4 py-4">
               <RiskGauge score={item.confidence} level={levelMap[item.risk_level]} />
               <div>

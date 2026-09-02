@@ -110,6 +110,13 @@ export default function Analysis() {
           <h1 className="text-lg font-bold text-primary lg:text-xl lg:text-text-dark">위험도 분석 결과</h1>
         </div>
 
+        <Card className="mt-3 border-warning/40 bg-warning-bg/40 py-2.5 lg:mt-3">
+          <p className="text-pretty text-[11px] leading-relaxed text-text-gray">
+            <span className="font-bold text-text-dark">⚠️ 법적 책임 고지 — </span>
+            <BrokenText text="본 분석 결과는 참고 자료이며 법률 자문을 대체하지 않습니다. AI 분석에는 오류가 있을 수 있으므로, 계약 진행 전 반드시 등기부등본을 직접 확인하고 필요시 전문가(공인중개사, 변호사)와 상담하시기 바랍니다. 분석 결과에 따른 계약 결정의 책임은 사용자 본인에게 있습니다." />
+          </p>
+        </Card>
+
         {isLegacy ? (
           <p className="mt-2 text-pretty text-[11px] leading-relaxed text-text-lightgray">
             <BrokenText text="이 분석은 예전 채점 기준으로 계산된 결과예요. 지금과 달리 그때는 점수가 낮을수록 위험하다는 뜻이었어요." />

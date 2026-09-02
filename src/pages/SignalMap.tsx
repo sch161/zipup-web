@@ -316,7 +316,7 @@ export default function SignalMap() {
               ))}
             </div>
             <p className="mt-3.5 border-t border-border pt-3 text-[10px] leading-relaxed text-text-lightgray">
-              <BrokenText text="세 지표를 합산해 위험도 점수를 계산해요. 모두 공식 피해 통계가 아닌 참고용 지표입니다." />
+              <BrokenText text="세 지표를 합산해 위험도 점수를 계산해요. 지역 위험도는 공식 피해 통계가 아닌 참고 지표이며, 특정 임대인이나 지역에 대한 법적 판단으로 사용될 수 없습니다." />
             </p>
           </Card>
         </div>
