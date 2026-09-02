@@ -66,7 +66,7 @@ async function fetchPage(pageNum) {
       const res = await fetch(`${BASE_URL}?cur_page=${pageNum}`, {
         headers: {
           "User-Agent":
-            "Mozilla/5.0 (compatible; ZIPUP-Sync/1.0; +https://zipup-web.vercel.app)",
+            "Mozilla/5.0 (compatible; ZIPUP-Sync/1.0; +https://zipup.kr)",
         },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
