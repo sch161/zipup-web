@@ -1,11 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import BrokenText from '../components/ui/BrokenText'
 import Card from '../components/ui/Card'
 import Chip from '../components/ui/Chip'
+import GlossaryHighlightedText from '../components/ui/GlossaryHighlightedText'
 import RiskGauge from '../components/ui/RiskGauge'
 import TopNav from '../components/TopNav'
 import type { AnalysisResult, RiskLevel } from '../lib/analyzeContract'
+import { fetchLegalTerms } from '../lib/legalTerms'
 
 const LAST_ANALYSIS_KEY = 'zipup:lastAnalysis'
 
@@ -69,6 +71,13 @@ export default function Analysis() {
   // scoreDirection이 없는 값(과거 이력 등 예상치 못한 경우)은 안전하게 legacy로 취급한다 —
   // "혹시 몰라 새 기준으로 해석"하면 숫자와 등급이 반대로 보일 위험이 있다.
   const isLegacy = result?.scoreDirection !== 'high_is_risky'
+
+  const [glossaryTerms, setGlossaryTerms] = useState<string[]>([])
+  useEffect(() => {
+    fetchLegalTerms()
+      .then((terms) => setGlossaryTerms(terms.map((t) => t.term)))
+      .catch(() => setGlossaryTerms([]))
+  }, [])
 
   useEffect(() => {
     if (!navState) return
@@ -234,12 +243,16 @@ export default function Analysis() {
                   {result.detectedClauses.map((clause, i) => (
                     <li key={i} className={`rounded-2xl p-2 ${levelRowStyle[clause.level]}`}>
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-balance text-xs font-bold text-text-dark">{clause.summary}</p>
+                        <p className="text-balance text-xs font-bold text-text-dark">
+                          <GlossaryHighlightedText text={clause.summary} terms={glossaryTerms} />
+                        </p>
                         <Chip tone={clause.level} className="shrink-0">
                           {levelLabel[clause.level]}
                         </Chip>
                       </div>
-                      <p className="mt-0.5 text-pretty text-[11px] leading-snug text-text-gray">{clause.explanation}</p>
+                      <p className="mt-0.5 text-pretty text-[11px] leading-snug text-text-gray">
+                        <GlossaryHighlightedText text={clause.explanation} terms={glossaryTerms} />
+                      </p>
                       {clause.legalProvision && (
                         <p className="mt-1 text-pretty text-[11px] leading-snug text-text-gray">
                           <span className="font-bold text-text-dark">관련 법령: </span>

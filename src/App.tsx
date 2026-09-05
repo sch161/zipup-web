@@ -6,6 +6,7 @@ import Home from './pages/Home'
 import Analysis from './pages/Analysis'
 import Cure from './pages/Cure'
 import GaslightingDetail from './pages/GaslightingDetail'
+import Glossary from './pages/Glossary'
 import Privacy from './pages/Privacy'
 import Profile from './pages/Profile'
 import ScoringGuide from './pages/ScoringGuide'
@@ -21,6 +22,7 @@ export default function App() {
       <Route path="/psych-guard/:id" element={<GaslightingDetail />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/scoring" element={<ScoringGuide />} />
+      <Route path="/glossary" element={<Glossary />} />
 
       <Route element={<MainLayout />}>
         <Route path="/home" element={<Home />} />
