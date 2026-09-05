@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "generate:regions": "node scripts/generate-regions.mjs",
     "sync:hug-defaulters": "node scripts/sync-hug-defaulters.mjs",
-    "fetch:legal-terms": "node scripts/fetch-legal-terms.mjs"
+    "fetch:legal-terms": "node scripts/fetch-legal-terms.mjs",
+    "backfill:legal-terms": "node scripts/backfill-legal-terms-from-provisions.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
