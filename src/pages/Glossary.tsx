@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import BrokenText from '../components/ui/BrokenText'
 import Card from '../components/ui/Card'
-import Chip from '../components/ui/Chip'
+import LegalTermCard from '../components/ui/LegalTermCard'
 import TopNav from '../components/TopNav'
 import { fetchLegalTerms, type LegalTerm } from '../lib/legalTerms'
 
@@ -20,41 +20,6 @@ function BackButton({ onClick }: { onClick: () => void }) {
     >
       ←
     </button>
-  )
-}
-
-function TermCard({ item }: { item: LegalTerm }) {
-  return (
-    <Card className="flex flex-col gap-2.5">
-      <div className="flex items-start justify-between gap-2">
-        <h2 className="text-base font-bold text-text-dark">{item.term}</h2>
-        {item.category && (
-          <Chip tone="warning" className="shrink-0">
-            {item.category}
-          </Chip>
-        )}
-      </div>
-
-      <div className="rounded-2xl bg-subtle p-3">
-        <p className="text-[11px] font-bold text-text-gray">📖 법제처/법령 공식 정의</p>
-        <p className="mt-1 text-pretty text-xs leading-relaxed text-text-dark">
-          <BrokenText text={item.officialDefinition} />
-        </p>
-      </div>
-
-      {item.plainExplanation && (
-        <div className="rounded-2xl bg-primary-bg/40 p-3">
-          <p className="text-[11px] font-bold text-primary">💡 쉽게 풀면</p>
-          <p className="mt-1 text-pretty text-xs leading-relaxed text-text-dark">
-            <BrokenText text={item.plainExplanation} />
-          </p>
-        </div>
-      )}
-
-      {item.source && (
-        <p className="text-pretty text-[10px] leading-relaxed text-text-lightgray">근거: {item.source}</p>
-      )}
-    </Card>
   )
 }
 
@@ -133,9 +98,13 @@ export default function Glossary() {
               </p>
             </Card>
           ) : (
-            filtered.map((item) => <TermCard key={item.term} item={item} />)
+            filtered.map((item) => <LegalTermCard key={item.term} item={item} />)
           )}
         </div>
+
+        {/* /law-search는 search-legal-terms Edge Function이 법제처 IP 화이트리스트에 막혀
+         * 아직 정상 동작하지 않는다(docs/PROJECT_OVERVIEW.md 참고) — 인프라가 준비될 때까지는
+         * 링크를 아예 렌더링하지 않아, 사용자가 지금 안 되는 기능에 진입하지 않게 한다. */}
       </div>
     </div>
   )
