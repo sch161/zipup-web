@@ -406,6 +406,11 @@ verify_jwt = false
 # Same reasoning as fetch-market-data above.
 verify_jwt = false
 
+[functions.search-legal-terms]
+# analyze-contract/analyze-chat과 동일한 이유 — 새 publishable anon key는 JWT가 아니라서
+# 비로그인 상태에서는 Authorization 헤더가 아예 안 실린다.
+verify_jwt = false
+
 [functions.sync-news]
 # Same reasoning as fetch-market-data above — this is also cron-only. Previously had
 # no override here (defaulted to verify_jwt = true) while its cron job sent no auth

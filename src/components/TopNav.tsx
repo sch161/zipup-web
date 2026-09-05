@@ -12,6 +12,7 @@ const menuItems = [
   { to: "/analysis", label: "위험 리포트" },
   { to: "/map", label: "안심 시그널 맵" },
   { to: "/psych-guard", label: "마음 상담" },
+  { to: "/glossary", label: "용어집" },
 ];
 
 export default function TopNav({ variant = "app" }: TopNavProps) {
