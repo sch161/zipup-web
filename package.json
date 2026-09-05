@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "generate:regions": "node scripts/generate-regions.mjs",
-    "sync:hug-defaulters": "node scripts/sync-hug-defaulters.mjs"
+    "sync:hug-defaulters": "node scripts/sync-hug-defaulters.mjs",
+    "fetch:legal-terms": "node scripts/fetch-legal-terms.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
