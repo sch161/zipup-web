@@ -10,7 +10,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 // 서버(supabase/functions/_shared/imageMask.ts)의 MAX_DIMENSION_PX와 반드시 같은 값으로
 // 맞춰둔다. 여기서 이 한도에 맞춰 렌더링 배율을 미리 정하지 않으면, 서버가 다시 축소하면서
 // 클라이언트가 공들여 렌더링한 해상도를 그냥 버리게 된다.
-const SERVER_MAX_DIMENSION = 2000;
+const SERVER_MAX_DIMENSION = 1200;
 // 페이지가 1장일 때도 무한정 키우지 않도록 두는 상한(대략 2000px / A4 세로 842pt ≈ 2.37배).
 const MAX_RENDER_SCALE = 2.5;
 // 이 배율보다 낮아지면(표준 A4 기준 페이지당 세로 약 715px, ~150dpi의 절반 이하) 본문 작은

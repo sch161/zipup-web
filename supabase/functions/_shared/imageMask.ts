@@ -15,7 +15,11 @@ import type { MaskBox } from './piiMask.ts'
 
 let initPromise: Promise<void> | null = null
 
-function ensureInitialized(): Promise<void> {
+// index.ts에서 이미지 처리(리사이즈) 직전에 명시적으로 호출해, WASM 컴파일 시간을 stageTimingsMs에
+// resize/imageEdit과 분리된 별도 항목(wasmInit)으로 기록할 수 있게 export한다. prepareImageForOcr/
+// applyBlackBoxes 내부에서도 그대로 호출하므로(멱등, initPromise로 캐시됨) 여기서 먼저 안 불러도
+// 동작은 같지만, 시간 측정을 위해서는 index.ts가 먼저 호출해야 한다.
+export function ensureInitialized(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
       // 0.0.43(2026-08-25 배포)부터 magick.wasm이 dist/ 바로 밑이 아니라
@@ -59,12 +63,18 @@ export async function applyBlackBoxes(imageBytes: Uint8Array, boxes: MaskBox[]):
   })
 }
 
-// Supabase Edge Functions cap out at 256MB memory. magick-wasm's cost is driven by decoded pixel
-// count (width * height), not compressed upload size — a small-looking JPEG can still decode to a
-// huge raw buffer at high resolution. So instead of gating on upload byte size, this caps the
-// longest side. 2000px is comfortably more detail than CLOVA OCR or Gemini need to read contract
-// text, while keeping the decoded buffer small regardless of how large the original photo was.
-const MAX_DIMENSION_PX = 2000
+// Supabase Edge Functions cap out at 256MB memory, and CPU time is capped separately. 2026-09
+// 실측 히스토리: 클라이언트 리사이즈 없이 원본 사진 그대로 왔을 때 cpu_time_used 3872ms(546),
+// 클라이언트에서 1500px로 미리 줄인 뒤에도 2183ms(여전히 546, 2초 한도를 8% 초과) — magick-wasm은
+// 리사이즈 "전에" 원본 해상도로 먼저 디코드하므로 서버 상수만으로는 한계가 있고, 클라이언트
+// 다운스케일(src/lib/analyzeContract.ts, src/lib/pdfToImage.ts)과 이 상수를 항상 같은 값으로
+// 맞춰야 한다. magick-wasm's cost is driven by decoded pixel count (width * height), not
+// compressed upload size — a small-looking JPEG can still decode to a huge raw buffer at high
+// resolution. So instead of gating on upload byte size, this caps the longest side. 1200px is
+// comfortably more detail than CLOVA OCR or Gemini need to read contract text, while keeping the
+// decoded buffer (and resize/encode CPU cost, which scales with pixel count) smaller regardless
+// of how large the original photo was.
+const MAX_DIMENSION_PX = 1200
 
 /** OCR로 보내기 전 이미지를 정규화한다: 해상도가 크면 축소하고, 이후 단계(OCR 좌표 계산과
  *  마스킹)가 항상 같은 바이트를 기준으로 동작하도록 PNG로 통일해 반환한다. 실패하면 예외를

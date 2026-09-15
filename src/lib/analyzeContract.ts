@@ -87,14 +87,57 @@ export interface AnalyzeContractInput {
   file?: File
 }
 
-async function fileToBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
+// 서버(supabase/functions/_shared/imageMask.ts)의 MAX_DIMENSION_PX와 반드시 같은 값으로 맞춰둔다.
+// PDF는 이미 lib/pdfToImage.ts에서 이 한도에 맞춰 렌더링되지만, 카메라로 찍은 사진은 원본
+// 해상도(요즘 폰 12MP 이상) 그대로 들어온다 — 이걸 리사이즈 없이 서버로 보내면 magick-wasm이
+// 리사이즈 "전에" 원본 해상도로 먼저 디코드해야 해서, 서버 쪽 MAX_DIMENSION_PX를 아무리 낮춰도
+// 디코드 비용 자체가 CPU 시간 제한(2초)을 넘겨버린다(실측: cpu_time_used 3872ms, 546 에러).
+// 브라우저는 이 제한이 없으므로 다운스케일을 여기서 먼저 끝내 서버가 항상 작은 이미지만 받게 한다.
+const MAX_UPLOAD_DIMENSION_PX = 1200
+
+async function resizeImageForUpload(file: File): Promise<{ blob: Blob; mimeType: string }> {
+  const bitmap = await createImageBitmap(file)
+  try {
+    const longestSide = Math.max(bitmap.width, bitmap.height)
+    const scale = Math.min(1, MAX_UPLOAD_DIMENSION_PX / longestSide)
+    const width = Math.max(1, Math.round(bitmap.width * scale))
+    const height = Math.max(1, Math.round(bitmap.height * scale))
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('canvas 2d context를 생성할 수 없습니다.')
+    ctx.drawImage(bitmap, 0, 0, width, height)
+
+    // PNG(계약서 스캔/PDF 변환본, 무손실)는 PNG로 그대로 두고, 카메라 JPG 사진만 JPG로 재인코딩한다 —
+    // 문서 스캔까지 매번 JPEG로 바꾸면 압축 손실로 작은 글씨 OCR 인식률이 떨어질 수 있어서다.
+    const outputMimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('이미지 변환에 실패했습니다.'))),
+        outputMimeType,
+        outputMimeType === 'image/jpeg' ? 0.9 : undefined,
+      )
+    })
+    return { blob, mimeType: outputMimeType }
+  } finally {
+    bitmap.close()
   }
-  return btoa(binary)
+}
+
+// base64.ts(supabase/functions/_shared)와 동일한 이유로 청크 단위로 인코딩한다 — 바이트 1개씩
+// String.fromCharCode + concat을 하면 이미지 크기에 비례해 브라우저 메인 스레드가 오래 묶인다.
+const BASE64_CHUNK_SIZE = 8192
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  const chunks: string[] = []
+  for (let i = 0; i < bytes.length; i += BASE64_CHUNK_SIZE) {
+    chunks.push(String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK_SIZE)))
+  }
+  return btoa(chunks.join(''))
 }
 
 async function unwrapFunctionsError(error: NonNullable<Awaited<ReturnType<typeof supabase.functions.invoke>>['error']>): Promise<Error> {
@@ -114,8 +157,9 @@ export async function analyzeContract(input: AnalyzeContractInput): Promise<Anal
   }
 
   if (input.file) {
-    body.fileBase64 = await fileToBase64(input.file)
-    body.fileMimeType = input.file.type
+    const { blob, mimeType } = await resizeImageForUpload(input.file)
+    body.fileBase64 = await blobToBase64(blob)
+    body.fileMimeType = mimeType
   }
 
   const { data, error } = await supabase.functions.invoke<AnalysisResult>('analyze-contract', { body })

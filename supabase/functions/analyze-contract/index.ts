@@ -7,7 +7,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { base64ToBytes, bytesToBase64 } from '../_shared/base64.ts'
 import { mimeTypeToClovaFormat, runClovaOcr } from '../_shared/clovaOcr.ts'
 import { findPiiMasks } from '../_shared/piiMask.ts'
-import { applyBlackBoxes, prepareImageForOcr } from '../_shared/imageMask.ts'
+import { applyBlackBoxes, ensureInitialized, prepareImageForOcr } from '../_shared/imageMask.ts'
 import { jeonseRatioScore } from '../_shared/riskScore.ts'
 import {
   calculateOverallScore,
@@ -463,6 +463,19 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: '이미지 파일(JPG, PNG)만 업로드할 수 있습니다.' }, 400)
     }
 
+    // magick-wasm은 첫 호출(콜드 스타트) 시 WASM 바이너리를 컴파일하는데, 이 컴파일 자체가 순수
+    // CPU 연산이라 리사이즈 시간에 섞이면 "이미지 처리가 느리다"와 "콜드 스타트라 느리다"를 구분할
+    // 수 없다. prepareImageForOcr 호출 전에 미리 불러 wasmInit을 별도 항목으로 잰다(멱등이라
+    // prepareImageForOcr/applyBlackBoxes 내부에서 다시 불러도 캐시된 Promise를 재사용할 뿐이다).
+    const wasmInitStart = Date.now()
+    try {
+      await ensureInitialized()
+    } catch (err) {
+      console.error('magick-wasm initialize failed, blocking analysis (cannot guarantee PII masking)', err)
+      return jsonResponse({ error: PII_MASK_FAILURE_MESSAGE }, 422)
+    }
+    stageTimingsMs.wasmInit = Date.now() - wasmInitStart
+
     // 해상도가 큰 사진은 OCR로 보내기 전에 먼저 축소·PNG로 정규화한다 — 이후 OCR 좌표와 마스킹이
     // 항상 이 바이트 기준으로 일치하게 하기 위함(원본 그대로 OCR에 보내고 나중에 별도로 축소하면
     // 좌표가 어긋난다). 실패하면 마스킹을 보장할 수 없으므로 분석을 중단한다.
@@ -508,8 +521,10 @@ Deno.serve(async (req: Request) => {
     try {
       const t0 = Date.now()
       const maskedBytes = await applyBlackBoxes(workingImageBytes, boxes)
-      stageTimingsMs.imageEdit = Date.now() - t0
+      // bytesToBase64도 이 구간에 포함시킨다 — 예전엔 imageEdit 측정이 끝난 다음 줄에서 호출돼
+      // 어느 stageTimingsMs 항목에도 안 잡히고 있었다(이미지 크기에 비례하는 순수 CPU 연산인데도).
       maskedImageBase64 = bytesToBase64(maskedBytes)
+      stageTimingsMs.imageEdit = Date.now() - t0
     } catch (err) {
       console.error(
         `PII masking failed, blocking analysis (refusing to send an unmasked image) — had ${stats.totalFields} OCR fields, ${stats.maskedFields} flagged for masking`,
