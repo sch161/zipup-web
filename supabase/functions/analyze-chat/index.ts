@@ -5,6 +5,7 @@
 // Each analysis is also persisted to `gaslighting_checks` via a service_role client.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { analyzePsychGuard, type PsychGuardGrade, type PsychGuardResult } from '../_shared/psychGuard.ts'
 
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')
 // Pinned model versions keep getting retired/restricted (2.0-flash, then 2.5-flash for new
@@ -38,6 +39,13 @@ interface AnalyzeChatRequest {
 
 const RISK_LEVELS = ['위험', '주의', '안전'] as const
 const PATTERN_LABELS = ['재촉', '허위정보 주입', '신뢰 유도'] as const
+
+// 규칙 기반 심리 가드(analyzePsychGuard)의 등급 -> 기존 Gemini 응답 스키마의 riskLevel 매핑.
+const PSYCH_GUARD_GRADE_TO_RISK_LEVEL: Record<PsychGuardGrade, (typeof RISK_LEVELS)[number]> = {
+  danger: '위험',
+  caution: '주의',
+  safe: '안전',
+}
 
 const ANALYSIS_RESPONSE_SCHEMA = {
   type: 'OBJECT',
@@ -222,6 +230,19 @@ Deno.serve(async (req: Request) => {
     }
 
     const result: GeminiResult = JSON.parse(text)
+
+    // Gemini의 "가스라이팅 여부" 자체 판단은 주관적이라 신뢰도가 낮다 — 규칙 기반
+    // analyzePsychGuard()로 최종 riskLevel/isWarning을 덮어써 판정 신뢰도를 높인다.
+    // 이미지만 첨부되고 텍스트가 없는 경우엔 매칭할 텍스트가 없으므로 Gemini 판단을 그대로 둔다.
+    let psychGuardResult: PsychGuardResult | null = null
+    if (message) {
+      psychGuardResult = analyzePsychGuard(message)
+      result.riskLevel = PSYCH_GUARD_GRADE_TO_RISK_LEVEL[psychGuardResult.grade]
+      result.isWarning = psychGuardResult.grade !== 'safe'
+      console.log(
+        `[analyze-chat] psychGuard grade=${psychGuardResult.grade} score=${psychGuardResult.totalScore} complex=${psychGuardResult.hasComplexPattern} (Gemini riskLevel 대체됨)`,
+      )
+    }
 
     const userId = await resolveUserId(req)
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
